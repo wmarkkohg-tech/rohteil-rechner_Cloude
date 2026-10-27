@@ -3,6 +3,7 @@ import cadquery as cq
 import os
 import base64
 import tempfile
+import pandas as pd
 from streamlit_stl import stl_from_file
 
 # --- Liste der gängigen DIN-Blechstärken in Europa (in mm) ---
@@ -13,21 +14,45 @@ def finde_norm_dicke(berechnet):
         return 0.0
     return min(DIN_STAERKEN, key=lambda x: abs(x - berechnet))
 
-st.set_page_config(page_title="Rohteil-Rechner", layout="wide")
+st.set_page_config(page_title="Rohteil- & Stücklisten-Rechner", layout="wide")
 
-# --- MAGISCHES CSS FÜR DRUCK (EXAKT 1 SEITE GARANTIERT) ---
-st.markdown("""
+# --- MAGISCHES CSS FÜR DRUCK (EXAKT 1 SEITE ALS EXCEL-STÜCKLISTE) ---
+st.markdown('''
 <style>
+/* 3D-Fenster auf dem Bildschirm abdunkeln */
 iframe[height="600"] {
     background-color: #334155 !important;
     border: 2px solid #0f172a;
     border-radius: 8px;
 }
 
+/* Professionelle Tabellen-Optik */
+table.excel-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: sans-serif;
+    margin-top: 10px;
+    margin-bottom: 20px;
+}
+table.excel-table th, table.excel-table td {
+    border: 1px solid #cbd5e1;
+    padding: 10px 12px;
+    text-align: left;
+    font-size: 14px;
+}
+table.excel-table th {
+    background-color: #f1f5f9;
+    color: #1e293b;
+    font-weight: bold;
+}
+table.excel-table tr:nth-child(even) {
+    background-color: #f8fafc;
+}
+
 @media print {
     @page { 
         size: A4 landscape; 
-        margin: 5mm; 
+        margin: 10mm; 
     }
     
     header, footer, [data-testid="stToolbar"], [data-testid="stSidebar"], 
@@ -43,7 +68,6 @@ iframe[height="600"] {
     html, body, .stApp, main, .block-container {
         height: 100vh !important;
         max-height: 100vh !important;
-        overflow: hidden !important; 
         background-color: white !important;
         margin: 0 !important;
         padding: 0 !important;
@@ -54,16 +78,15 @@ iframe[height="600"] {
         flex-direction: row !important;
         flex-wrap: nowrap !important; 
         align-items: flex-start !important;
-        gap: 15px !important;
-        max-height: 18cm !important;
+        gap: 20px !important;
     }
     div[data-testid="column"]:nth-of-type(1) {
-        width: 35% !important;
-        flex: 0 0 35% !important;
+        width: 50% !important;
+        flex: 0 0 50% !important;
     }
     div[data-testid="column"]:nth-of-type(2) {
-        width: 65% !important;
-        flex: 0 0 65% !important;
+        width: 50% !important;
+        flex: 0 0 50% !important;
     }
 
     h3 {
@@ -73,27 +96,28 @@ iframe[height="600"] {
     }
 
     img {
-        max-height: 13cm !important; 
+        max-height: 12cm !important; 
         width: auto !important;
         max-width: 100% !important;
         object-fit: contain !important;
-        border: 2px solid #000 !important;
+        border: 1px solid #000 !important;
         background-color: white !important;
     }
 
-    .mass-box {
-        display: block !important;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-        padding: 10px !important; 
-        margin-bottom: 5px !important;
+    table.excel-table {
+        font-size: 11pt !important;
+        border: 1px solid #000 !important;
+    }
+    table.excel-table th, table.excel-table td {
+        border: 1px solid #000 !important;
+        padding: 6px 8px !important;
     }
 }
 </style>
-""", unsafe_allow_html=True)
+''', unsafe_allow_html=True)
 
-st.title("📦 Rohteil-Maße ermitteln")
-st.write("Ziehe eine STEP-Datei in das Feld unten. Das Programm liest automatisch die äußersten Kanten aus und erstellt eine isometrische 2D-Zeichnung zum Ausdrucken.")
+st.title("📦 Rohteil- & Stücklisten-Rechner")
+st.write("Ziehe eine STEP-Datei hinein. Das System erkennt identische Teile automatisch, fasst sie in einer Stückliste zusammen und generiert eine saubere Druckansicht.")
 
 uploaded_file = st.file_uploader("STEP-Datei auswählen oder hier ablegen", type=["step", "stp"])
 
@@ -109,52 +133,74 @@ if uploaded_file is not None:
             f.write(uploaded_file.getbuffer())
         
         try:
-            with st.spinner("Lese 3D-Daten aus und generiere Zeichnung..."):
+            with st.spinner("Lese 3D-Daten aus, analysiere Bauteile und erstelle Stückliste..."):
                 baugruppe = cq.importers.importStep(dateiname)
                 teile = baugruppe.solids().vals()
                 
                 if len(teile) == 0:
                     st.warning("⚠️ Die Datei konnte gelesen werden, enthält aber keine Volumenkörper.")
                 else:
-                    st.success(f"Erfolgreich! Es wurden {len(teile)} Bauteil(e) gefunden.")
+                    st.success(f"Erfolgreich! Es wurden insgesamt {len(teile)} Volumenkörper gefunden.")
                     
-                    col1, col2 = st.columns([1, 2])
+                    # --- TEILE ANALYSIEREN UND GLEICHE TEILE GRUPPIEREN ---
+                    rohteile_liste = []
+                    for teil in teile:
+                        box = teil.BoundingBox()
+                        # Auf 1 Nachkommastelle runden, um minimale CAD-Toleranzen auszugleichen
+                        L = round(box.xlen, 2)
+                        B = round(box.ylen, 2)
+                        D = round(box.zlen, 2)
+                        
+                        volumen = teil.Volume()
+                        oberflaeche = teil.Area()
+                        
+                        if oberflaeche > 0:
+                            roh_staerke = (volumen / oberflaeche) * 2
+                            norm_staerke = finde_norm_dicke(roh_staerke)
+                        else:
+                            roh_staerke = 0.0
+                            norm_staerke = 0.0
+                            
+                        rohteile_liste.append({
+                            "Laenge": L,
+                            "Breite": B,
+                            "Dicke": D,
+                            "NormStaerke": norm_staerke
+                        })
+                    
+                    # In Pandas DataFrame umwandeln und identische Teile zusammenfassen
+                    df = pd.DataFrame(rohteile_liste)
+                    df_grouped = df.groupby(["Laenge", "Breite", "Dicke", "NormStaerke"]).size().reset_index(name="Anzahl")
+                    df_grouped = df_grouped.sort_values(by="Anzahl", ascending=False).reset_index(drop=True)
+                    
+                    col1, col2 = st.columns([1, 1])
                     
                     with col1:
-                        st.markdown("### 📐 Rohteil-Maße")
-                        for i, teil in enumerate(teile):
-                            box = teil.BoundingBox()
-                            L = round(box.xlen, 2)
-                            B = round(box.ylen, 2)
-                            D = round(box.zlen, 2)
+                        st.markdown(f"### 📋 Stückliste: {file_basename}")
+                        
+                        # HTML-Tabelle im Excel-Stil bauen
+                        html_table = '<table class="excel-table">'
+                        html_table += '<thead><tr><th>Pos.</th><th>Anzahl</th><th>Außenmaß (L x B x D)</th><th>DIN-Stärke</th></tr></thead>'
+                        html_table += '<tbody>'
+                        
+                        for idx, row in df_grouped.iterrows():
+                            pos = idx + 1
+                            anzahl = row["Anzahl"]
+                            mass_str = f"{row['Laenge']} x {row['Breite']} x {row['Dicke']} mm"
+                            norm_str = f"{row['NormStaerke']} mm"
                             
-                            volumen = teil.Volume()
-                            oberflaeche = teil.Area()
+                            html_table += f'<tr>'
+                            html_table += f'<td><b>{pos}</b></td>'
+                            html_table += f'<td><b>{anzahl} Stk.</b></td>'
+                            html_table += f'<td>{mass_str}</td>'
+                            html_table += f'<td>{norm_str}</td>'
+                            html_table += f'</tr>'
                             
-                            if oberflaeche > 0:
-                                roh_staerke = (volumen / oberflaeche) * 2
-                                norm_staerke = finde_norm_dicke(roh_staerke)
-                            else:
-                                roh_staerke = 0.0
-                                norm_staerke = 0.0
-                                
-                            if len(teile) == 1:
-                                teil_name = file_basename
-                            else:
-                                teil_name = f"{file_basename} (Teil {i+1})"
-                            
-                            html_masse = f"""
-                            <div class="mass-box" style="background-color: #eff6ff; border-left: 5px solid #3b82f6; border-radius: 5px; font-family: sans-serif; color: #000;">
-                                <h4 style="margin-top:0; margin-bottom:5px; color: #1e3a8a; word-wrap: break-word;">{teil_name}</h4>
-                                <p style="margin: 2px 0;"><strong>Außenmaß:</strong> {L} x {B} x {D} mm</p>
-                                <p style="margin: 2px 0;"><strong>Materialstärke (DIN):</strong> {norm_staerke} mm</p>
-                                <p style="font-size: 0.9em; color: #555; margin: 2px 0;"><em>(Rechnerisch: {round(roh_staerke, 2)} mm)</em></p>
-                            </div>
-                            """
-                            st.markdown(html_masse, unsafe_allow_html=True)
-                            
+                        html_table += '</tbody></table>'
+                        
+                        st.markdown(html_table, unsafe_allow_html=True)
                         st.write("") 
-                        st.components.v1.html('<button onclick="window.parent.print()" style="padding:10px 20px; font-size:18px; cursor:pointer; background-color:#f0f2f6; border:1px solid #ccc; border-radius:5px; width: 100%; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">🖨️ Datenblatt drucken</button>')
+                        st.components.v1.html('<button onclick="window.parent.print()" style="padding:12px 20px; font-size:16px; font-weight:bold; cursor:pointer; background-color:#2563eb; color:white; border:none; border-radius:6px; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">🖨️ Stückliste & Zeichnung drucken</button>', height=60)
                         
                     with col2:
                         st.markdown("### 🖍️ Technische Zeichnung")
@@ -162,8 +208,8 @@ if uploaded_file is not None:
                         compound = cq.Compound.makeCompound(teile)
                         
                         opt = {
-                            "width": 1000,
-                            "height": 800,
+                            "width": 900,
+                            "height": 750,
                             "showAxes": False,
                             "projectionDir": (1.2, -1.0, 1.0)
                         }
@@ -177,7 +223,7 @@ if uploaded_file is not None:
                             svg_data = f.read()
                             
                         b64 = base64.b64encode(svg_data.encode("utf-8")).decode("utf-8")
-                        html_img = f'<img src="data:image/svg+xml;base64,{b64}" style="width: 100%; max-height: 800px; border: 1px solid #ddd; padding: 10px; background-color: white;" />'
+                        html_img = f'<img src="data:image/svg+xml;base64,{b64}" style="width: 100%; max-height: 750px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; background-color: white;" />'
                         st.markdown(html_img, unsafe_allow_html=True)
                         
                         st.write("---")
@@ -201,18 +247,18 @@ if uploaded_file is not None:
                                 
                             cq.exporters.export(c_export, stl_name, tolerance=0.5, angularTolerance=0.5)
                             stl_from_file(file_path=stl_name, color="#ff8c00", height=600)
-                    
-        except Exception as e:
-            st.error(f"Es gab ein technisches Problem beim Lesen der Datei. Fehler: {e}")
+                
+    except Exception as e:
+        st.error(f"Es gab ein technisches Problem beim Lesen der Datei. Fehler: {e}")
 
-# --- SCHÖNER TEAM-TEILEN-BUTTON UNTEN IN DER APP ---
+# --- APP-LINK FÜR DAS TEAM ---
 st.markdown("---")
 col_b1, col_b2, col_b3 = st.columns([1, 2, 1])
 with col_b2:
     st.markdown(
         '<div style="text-align: center;">'
         '<a href="" target="_self" style="text-decoration: none;">'
-        '<button style="padding: 12px 24px; font-size: 16px; font-weight: bold; cursor: pointer; background-color: #3b82f6; color: white; border: none; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%;">🌐 Diesen App-Link für das Team kopieren</button>'
+        '<button style="padding: 10px 20px; font-size: 15px; font-weight: bold; cursor: pointer; background-color: #10b981; color: white; border: none; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%;">🌐 App-Link für das Team teilen</button>'
         '</a>'
         '</div>',
         unsafe_allow_html=True
