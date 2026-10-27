@@ -22,7 +22,7 @@ def finde_norm_dicke(berechnet):
 
 st.set_page_config(page_title="Rohteil- & Stücklisten-Rechner", layout="wide")
 
-# --- DRUCK-CSS: LINKS STÜCKLISTE, RECHTS ZEICHNUNG (NEBENEREINANDER IM QUERFORMAT) ---
+# --- DRUCK-CSS: LINKS STÜCKLISTE, RECHTS ZEICHNUNG (NEBENEINANDER IM QUERFORMAT) ---
 st.markdown('''
 <style>
 iframe[height="600"] {
@@ -98,14 +98,14 @@ table.excel-table tr:nth-child(even) {
     }
     
     div[data-testid="column"]:nth-of-type(1) {
-        width: 48% !important;
-        flex: 0 0 48% !important;
+        width: 50% !important;
+        flex: 0 0 50% !important;
         display: block !important;
     }
     
     div[data-testid="column"]:nth-of-type(2) {
-        width: 52% !important;
-        flex: 0 0 52% !important;
+        width: 50% !important;
+        flex: 0 0 50% !important;
         display: block !important;
     }
 
@@ -118,7 +118,7 @@ table.excel-table tr:nth-child(even) {
     }
 
     table.excel-table {
-        font-size: 8pt !important;
+        font-size: 7.5pt !important;
         border: 1px solid #000 !important;
     }
     table.excel-table th, table.excel-table td {
@@ -135,7 +135,7 @@ table.excel-table tr:nth-child(even) {
 ''', unsafe_allow_html=True)
 
 st.title("📦 Rohteil- & Stücklisten-Rechner")
-st.write("Wähle Material, definiere den Verschnitt in % und erhalte die komplette Aufschlüsselung inklusive aller Gewichte und Preise.")
+st.write("Wähle Material, definiere den Verschnitt in % und erhalte die komplette Aufschlüsselung inklusive Blechstärke, Gewichten und Preisen.")
 
 # --- EINSTELLUNGEN ---
 col_m1, col_m2, col_m3 = st.columns([2, 1, 1])
@@ -164,7 +164,7 @@ if uploaded_file is not None:
             f.write(uploaded_file.getbuffer())
         
         try:
-            with st.spinner("Analysiere 3D-Daten, berechne Gewichte, Verschnitt und Preise..."):
+            with st.spinner("Analysiere 3D-Daten, berechne Blechstärken, Gewichte, Verschnitt und Preise..."):
                 baugruppe = cq.importers.importStep(dateiname)
                 teile = baugruppe.solids().vals()
                 
@@ -202,7 +202,7 @@ if uploaded_file is not None:
                     
                     df = pd.DataFrame(rohteile_liste)
                     
-                    # Gruppieren nach gleichen Abmessungen
+                    # Gruppieren nach gleichen Abmessungen und Blechstärke
                     df_grouped = df.groupby(["Laenge", "Breite", "Dicke", "NormStaerke"]).agg(
                         Anzahl=("Laenge", "count"),
                         EinzelGewicht=("EinzelGewicht", "first")
@@ -232,13 +232,14 @@ if uploaded_file is not None:
                         st.markdown(f"### 📋 Stückliste: {file_basename}")
                         
                         html_table = '<table class="excel-table">'
-                        html_table += '<thead><tr><th>Pos.</th><th>Menge</th><th>Maße (L x B x D)</th><th>Einz.-Gew.</th><th>Ges.-Gew.</th><th>Einz.-Preis</th><th>Ges.-Preis</th></tr></thead>'
+                        html_table += '<thead><tr><th>Pos.</th><th>Menge</th><th>Maße (L x B x D)</th><th>DIN-Stärke</th><th>Einz.-Gew.</th><th>Ges.-Gew.</th><th>Einz.-Preis</th><th>Ges.-Preis</th></tr></thead>'
                         html_table += '<tbody>'
                         
                         for idx, row in df_grouped.iterrows():
                             pos = idx + 1
                             anzahl = int(row["Anzahl"])
                             mass_str = f"{row['Laenge']}x{row['Breite']}x{row['Dicke']}mm"
+                            norm_str = f"{row['NormStaerke']} mm"
                             einzel_gew_str = f"{round(row['EinzelGewicht'], 2)} kg"
                             gesamt_gew_str = f"{round(row['GesamtGewichtBrutto'], 2)} kg"
                             einzel_preis_str = f"{round(row['EinzelPreis'], 2)} Fr."
@@ -248,6 +249,7 @@ if uploaded_file is not None:
                             html_table += f'<td><b>{pos}</b></td>'
                             html_table += f'<td><b>{anzahl}x</b></td>'
                             html_table += f'<td>{mass_str}</td>'
+                            html_table += f'<td><b>{norm_str}</b></td>'
                             html_table += f'<td>{einzel_gew_str}</td>'
                             html_table += f'<td><b>{gesamt_gew_str}</b></td>'
                             html_table += f'<td>{einzel_preis_str}</td>'
