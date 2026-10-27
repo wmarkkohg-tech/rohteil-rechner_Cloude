@@ -300,3 +300,30 @@ if uploaded_file is not None:
                             bbox = compound.BoundingBox()
                             dx = -(bbox.xmin + bbox.xmax) / 2
                             dy = -(bbox.ymin + bbox.ymax) / 2
+                            dz = -(bbox.zmin + bbox.zmax) / 2
+                            
+                            c_centered = compound.translate((dx, dy, dz))
+                            cfg_max_dim = max(bbox.xlen, bbox.ylen, bbox.zlen)
+                            if cfg_max_dim > 150:
+                                scale_factor = 100.0 / cfg_max_dim
+                                c_export = c_centered.scale(scale_factor)
+                            else:
+                                c_export = c_centered
+                                
+                            cq.exporters.export(c_export, stl_name, tolerance=0.5, angularTolerance=0.5)
+                            stl_from_file(file_path=stl_name, color="#ff8c00", height=600)
+                
+        except Exception as e:
+            st.error(f"Es gab ein technisches Problem beim Lesen der Datei. Fehler: {e}")
+
+st.markdown("---")
+col_b1, col_b2, col_b3 = st.columns([1, 2, 1])
+with col_b2:
+    st.markdown(
+        '<div style="text-align: center;">'
+        '<a href="" target="_self" style="text-decoration: none;">'
+        '<button style="padding: 10px 20px; font-size: 15px; font-weight: bold; cursor: pointer; background-color: #10b981; color: white; border: none; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%;">🌐 App-Link für das Team teilen</button>'
+        '</a>'
+        '</div>',
+        unsafe_allow_html=True
+    )
