@@ -84,8 +84,8 @@ table.excel-table tr:nth-child(even) {
         color: black !important;
         margin: 0 !important;
         padding: 0 !important;
-        height: 100% !important;
-        overflow: hidden !important;
+        height: auto !important;
+        overflow: visible !important;
     }
     
     div[data-testid="stHorizontalBlock"] {
@@ -98,14 +98,14 @@ table.excel-table tr:nth-child(even) {
     }
     
     div[data-testid="column"]:nth-of-type(1) {
-        width: 50% !important;
-        flex: 0 0 50% !important;
+        width: 54% !important;
+        flex: 0 0 54% !important;
         display: block !important;
     }
     
     div[data-testid="column"]:nth-of-type(2) {
-        width: 50% !important;
-        flex: 0 0 50% !important;
+        width: 46% !important;
+        flex: 0 0 46% !important;
         display: block !important;
     }
 
@@ -134,8 +134,8 @@ table.excel-table tr:nth-child(even) {
 </style>
 ''', unsafe_allow_html=True)
 
-st.title("📦 Rohteil- & Stücklisten-Rechner")
-st.write("Wähle Material, definiere den Verschnitt in % und erhalte die komplette Aufschlüsselung inklusive Blechstärke, Gewichten und Preisen.")
+st.title("📦 Rohteil- & Stücklisten-Rechner (Multi-Datei)")
+st.write("Wähle Material, definiere den Verschnitt in % und ziehe **eine oder mehrere STEP-Dateien gleichzeitig** hinein.")
 
 # --- EINSTELLUNGEN ---
 col_m1, col_m2, col_m3 = st.columns([2, 1, 1])
@@ -150,63 +150,108 @@ with col_m3:
 dichte = MATERIALIEN[selected_material]["dichte"]
 faktor_verschnitt = verschnitt_prozent / 100.0
 
-uploaded_file = st.file_uploader("STEP-Datei auswählen oder hier ablegen", type=["step", "stp"])
+# --- MULTI-UPLOAD AKTIVIERT ---
+uploaded_files = st.file_uploader("STEP-Datei(en) auswählen oder hier ablegen (Mehrfachauswahl möglich)", type=["step", "stp"], accept_multiple_files=True)
 
-if uploaded_file is not None:
-    file_basename = os.path.splitext(uploaded_file.name)[0]
-    
+if uploaded_files:
     with tempfile.TemporaryDirectory() as tmpdir:
-        dateiname = os.path.join(tmpdir, "temp_bauteil.step")
         svg_name = os.path.join(tmpdir, "temp_vorschau.svg")
         stl_name = os.path.join(tmpdir, "temp_3d.stl")
         
-        with open(dateiname, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+        alle_positionen = []
+        alle_teile_verschoben = []
+        aktueller_x_offset = 0.0
         
         try:
-            with st.spinner("Analysiere 3D-Daten, berechne Blechstärken, Gewichte, Verschnitt und Preise..."):
-                baugruppe = cq.importers.importStep(dateiname)
-                teile = baugruppe.solids().vals()
-                
-                if len(teile) == 0:
-                    st.warning("⚠️ Die Datei konnte gelesen werden, enthält aber keine Volumenkörper.")
-                else:
-                    st.success(f"Erfolgreich! Insgesamt {len(teile)} Volumenkörper gefunden.")
+            with st.spinner(f"Analysiere {len(uploaded_files)} STEP-Datei(en), benenne Bauteile und berechne Preise..."):
+                for i, uploaded_file in enumerate(uploaded_files):
+                    file_basename = os.path.splitext(uploaded_file.name)[0]
+                    dateiname = os.path.join(tmpdir, f"temp_bauteil_{i}.step")
                     
-                    rohteile_liste = []
-                    for teil in teile:
-                        box = teil.BoundingBox()
-                        L = round(box.xlen, 2)
-                        B = round(box.ylen, 2)
-                        D = round(box.zlen, 2)
+                    with open(dateiname, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    
+                    baugruppe = cq.importers.importStep(dateiname)
+                    teile = baugruppe.solids().vals()
+                    
+                    if len(teile) > 0:
+                        # Für die Gesamtzeichnung: Dateien nebeneinander anordnen
+                        file_compound = cq.Compound.makeCompound(teile)
+                        bbox_file = file_compound.BoundingBox()
                         
-                        volumen_mm3 = teil.Volume()
-                        volumen_dm3 = volumen_mm3 / 1_000_000.0  # mm³ in dm³
-                        einzel_gewicht = volumen_dm3 * dichte     # Gewicht in kg pro Stück
+                        dx = -bbox_file.xmin + aktueller_x_offset
+                        dy = -bbox_file.ymin
+                        dz = -bbox_file.zmin
                         
-                        oberflaeche = teil.Area()
-                        if oberflaeche > 0:
-                            roh_staerke = (volumen_mm3 / oberflaeche) * 2
-                            norm_staerke = finde_norm_dicke(roh_staerke)
-                        else:
-                            roh_staerke = 0.0
-                            norm_staerke = 0.0
+                        verschobenes_compound = file_compound.translate((dx, dy, dz))
+                        alle_teile_verschoben.append(verschobenes_compound)
+                        
+                        abstand = max(bbox_file.xlen * 0.2, 50.0)
+                        aktueller_x_offset += bbox_file.xlen + abstand
+                        
+                        # Teile innerhalb dieser STEP-Datei analysieren
+                        datei_rohteile = []
+                        for teil in teile:
+                            box = teil.BoundingBox()
+                            abmessungen = sorted([round(box.xlen, 2), round(box.ylen, 2), round(box.zlen, 2)], reverse=True)
+                            L, B, D = abmessungen[0], abmessungen[1], abmessungen[2]
                             
-                        rohteile_liste.append({
-                            "Laenge": L,
-                            "Breite": B,
-                            "Dicke": D,
-                            "NormStaerke": norm_staerke,
-                            "EinzelGewicht": einzel_gewicht
-                        })
-                    
-                    df = pd.DataFrame(rohteile_liste)
-                    
-                    # Gruppieren nach gleichen Abmessungen und Blechstärke
-                    df_grouped = df.groupby(["Laenge", "Breite", "Dicke", "NormStaerke"]).agg(
-                        Anzahl=("Laenge", "count"),
-                        EinzelGewicht=("EinzelGewicht", "first")
-                    ).reset_index()
+                            volumen_mm3 = teil.Volume()
+                            volumen_dm3 = volumen_mm3 / 1_000_000.0
+                            einzel_gewicht = volumen_dm3 * dichte
+                            
+                            oberflaeche = teil.Area()
+                            if oberflaeche > 0:
+                                roh_staerke = (volumen_mm3 / oberflaeche) * 2
+                                norm_staerke = finde_norm_dicke(roh_staerke)
+                            else:
+                                roh_staerke = 0.0
+                                norm_staerke = 0.0
+                                
+                            datei_rohteile.append({
+                                "Laenge": L,
+                                "Breite": B,
+                                "Dicke": D,
+                                "NormStaerke": norm_staerke,
+                                "EinzelGewicht": einzel_gewicht
+                            })
+                        
+                        # Gleiche Teile innerhalb derselben STEP-Datei gruppieren
+                        df_file = pd.DataFrame(datei_rohteile)
+                        df_file_grouped = df_file.groupby(["Laenge", "Breite", "Dicke", "NormStaerke"]).agg(
+                            Anzahl=("Laenge", "count"),
+                            EinzelGewicht=("EinzelGewicht", "first")
+                        ).reset_index()
+                        
+                        # Sortieren nach Häufigkeit/Größe für logische Nummerierung
+                        df_file_grouped = df_file_grouped.sort_values(by=["Anzahl", "Laenge"], ascending=[False, False]).reset_index(drop=True)
+                        
+                        # NAMENSVERGABE:
+                        # 1 Bauteil-Typ in der STEP -> heißt genau wie die STEP-Datei
+                        # Mehrere verschiedene Bauteile in der STEP -> Dateiname_1, Dateiname_2, ...
+                        anzahl_unterschiedliche_teile = len(df_file_grouped)
+                        for idx_f, row_f in df_file_grouped.iterrows():
+                            if anzahl_unterschiedliche_teile == 1:
+                                bauteil_name = file_basename
+                            else:
+                                bauteil_name = f"{file_basename}_{idx_f + 1}"
+                                
+                            alle_positionen.append({
+                                "BauteilName": bauteil_name,
+                                "Anzahl": row_f["Anzahl"],
+                                "Laenge": row_f["Laenge"],
+                                "Breite": row_f["Breite"],
+                                "Dicke": row_f["Dicke"],
+                                "NormStaerke": row_f["NormStaerke"],
+                                "EinzelGewicht": row_f["EinzelGewicht"]
+                            })
+                
+                if len(alle_positionen) == 0:
+                    st.warning("⚠️ Die hochgeladenen Dateien enthielten keine gültigen 3D-Volumenkörper.")
+                else:
+                    df_grouped = pd.DataFrame(alle_positionen)
+                    gesamt_bauteile_anzahl = int(df_grouped["Anzahl"].sum())
+                    st.success(f"Erfolgreich! Aus {len(uploaded_files)} Datei(en) wurden insgesamt {gesamt_bauteile_anzahl} Bauteile ({len(df_grouped)} Positionen) analysiert.")
                     
                     # Berechnungen pro Position
                     df_grouped["GesamtGewichtNetto"] = df_grouped["EinzelGewicht"] * df_grouped["Anzahl"]
@@ -216,8 +261,6 @@ if uploaded_file is not None:
                     df_grouped["EinzelPreis"] = df_grouped["EinzelGewicht"] * preis_pro_kg
                     df_grouped["GesamtPreisBrutto"] = df_grouped["GesamtGewichtBrutto"] * preis_pro_kg
                     
-                    df_grouped = df_grouped.sort_values(by="Anzahl", ascending=False).reset_index(drop=True)
-                    
                     # Gesamtsummen für die Box unten
                     netto_ges_gew = df_grouped["GesamtGewichtNetto"].sum()
                     verschnitt_ges_gew = df_grouped["VerschnittGewicht"].sum()
@@ -226,17 +269,22 @@ if uploaded_file is not None:
                     verschnitt_ges_preis = verschnitt_ges_gew * preis_pro_kg
                     brutto_ges_preis = df_grouped["GesamtPreisBrutto"].sum()
                     
-                    col1, col2 = st.columns([1, 1])
+                    col1, col2 = st.columns([1.15, 0.85])
                     
                     with col1:
-                        st.markdown(f"### 📋 Stückliste: {file_basename}")
+                        if len(uploaded_files) == 1:
+                            titel_text = f"📋 Stückliste: {os.path.splitext(uploaded_files[0].name)[0]}"
+                        else:
+                            titel_text = f"📋 Gesamt-Stückliste ({len(uploaded_files)} Dateien)"
+                        st.markdown(f"### {titel_text}")
                         
                         html_table = '<table class="excel-table">'
-                        html_table += '<thead><tr><th>Pos.</th><th>Menge</th><th>Maße (L x B x D)</th><th>DIN-Stärke</th><th>Einz.-Gew.</th><th>Ges.-Gew.</th><th>Einz.-Preis</th><th>Ges.-Preis</th></tr></thead>'
+                        html_table += '<thead><tr><th>Pos.</th><th>Bauteil / Benennung</th><th>Menge</th><th>Maße (L x B x D)</th><th>DIN-Stärke</th><th>Einz.-Gew.</th><th>Ges.-Gew.</th><th>Einz.-Preis</th><th>Ges.-Preis</th></tr></thead>'
                         html_table += '<tbody>'
                         
                         for idx, row in df_grouped.iterrows():
                             pos = idx + 1
+                            bauteil_str = row["BauteilName"]
                             anzahl = int(row["Anzahl"])
                             mass_str = f"{row['Laenge']}x{row['Breite']}x{row['Dicke']}mm"
                             norm_str = f"{row['NormStaerke']} mm"
@@ -247,6 +295,7 @@ if uploaded_file is not None:
                             
                             html_table += '<tr>'
                             html_table += f'<td><b>{pos}</b></td>'
+                            html_table += f'<td><b>{bauteil_str}</b></td>'
                             html_table += f'<td><b>{anzahl}x</b></td>'
                             html_table += f'<td>{mass_str}</td>'
                             html_table += f'<td><b>{norm_str}</b></td>'
@@ -262,7 +311,7 @@ if uploaded_file is not None:
                         # --- SEPARATE ZUSAMMENFASSUNG UNTEN ---
                         summary_html = f'''
                         <div class="summary-box">
-                            <b>📊 Gesamtauswertung ({selected_material}):</b><br>
+                            <b>📊 Gesamtauswertung ({selected_material} | Total {gesamt_bauteile_anzahl} Teile):</b><br>
                             • Netto-Gewicht: <b>{round(netto_ges_gew, 2)} kg</b> ({round(netto_ges_preis, 2)} Fr.)<br>
                             • Verschnitt ({int(verschnitt_prozent)}%): <b>{round(verschnitt_ges_gew, 2)} kg</b> ({round(verschnitt_ges_preis, 2)} Fr.)<br>
                             <hr style="margin: 3px 0; border-top: 1px solid #94a3b8;">
@@ -275,9 +324,9 @@ if uploaded_file is not None:
                         st.components.v1.html('<button onclick="window.parent.print()" style="padding:10px 20px; font-size:15px; font-weight:bold; cursor:pointer; background-color:#2563eb; color:white; border:none; border-radius:6px; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">🖨️ Stückliste & Zeichnung drucken</button>', height=55)
                         
                     with col2:
-                        st.markdown("### 🖍️ Technische Zeichnung")
+                        st.markdown("### 🖍️ Technische Gesamt-Zeichnung")
                         
-                        compound = cq.Compound.makeCompound(teile)
+                        gesamt_compound = cq.Compound.makeCompound(alle_teile_verschoben)
                         
                         opt = {
                             "width": 1200,
@@ -287,9 +336,9 @@ if uploaded_file is not None:
                         }
                         
                         try:
-                            cq.exporters.export(compound, svg_name, opt=opt)
+                            cq.exporters.export(gesamt_compound, svg_name, opt=opt)
                         except:
-                            cq.exporters.export(compound, svg_name)
+                            cq.exporters.export(gesamt_compound, svg_name)
                             
                         with open(svg_name, "r", encoding="utf-8") as f:
                             svg_data = f.read()
@@ -303,12 +352,12 @@ if uploaded_file is not None:
                         if st.checkbox("🔄 Interaktive 3D-Ansicht anzeigen (Drehen & Zoomen)"):
                             st.info("💡 Tipp: Mit gedrückter linker Maustaste drehen, mit dem Mausrad zoomen.")
                             
-                            bbox = compound.BoundingBox()
+                            bbox = gesamt_compound.BoundingBox()
                             dx = -(bbox.xmin + bbox.xmax) / 2
                             dy = -(bbox.ymin + bbox.ymax) / 2
                             dz = -(bbox.zmin + bbox.zmax) / 2
                             
-                            c_centered = compound.translate((dx, dy, dz))
+                            c_centered = gesamt_compound.translate((dx, dy, dz))
                             cfg_max_dim = max(bbox.xlen, bbox.ylen, bbox.zlen)
                             if cfg_max_dim > 150:
                                 scale_factor = 100.0 / cfg_max_dim
@@ -320,7 +369,7 @@ if uploaded_file is not None:
                             stl_from_file(file_path=stl_name, color="#ff8c00", height=600)
                 
         except Exception as e:
-            st.error(f"Es gab ein technisches Problem beim Lesen der Datei. Fehler: {e}")
+            st.error(f"Es gab ein technisches Problem beim Lesen der Dateien. Fehler: {e}")
 
 st.markdown("---")
 st.markdown(
