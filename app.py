@@ -22,7 +22,7 @@ def finde_norm_dicke(berechnet):
 
 st.set_page_config(page_title="Rohteil- & Stücklisten-Rechner", layout="wide")
 
-# --- DRUCK-CSS: FLEXIBEL (NUTZT SO VIELE SEITEN WIE NÖTIG, KEINE LEERSEITEN) ---
+# --- DRUCK-CSS: LINKS STÜCKLISTE, RECHTS ZEICHNUNG (NEBENEREINANDER IM QUERFORMAT) ---
 st.markdown('''
 <style>
 iframe[height="600"] {
@@ -36,14 +36,14 @@ table.excel-table {
     border-collapse: collapse;
     font-family: sans-serif;
     margin-top: 10px;
-    margin-bottom: 15px;
+    margin-bottom: 10px;
     color: #000000;
 }
 table.excel-table th, table.excel-table td {
     border: 1px solid #94a3b8;
-    padding: 5px 6px;
+    padding: 4px 5px;
     text-align: left;
-    font-size: 10px;
+    font-size: 9.5px;
     color: #000000;
 }
 table.excel-table th {
@@ -59,18 +59,18 @@ table.excel-table tr:nth-child(even) {
     background-color: #f1f5f9;
     border: 1px solid #cbd5e1;
     border-radius: 6px;
-    padding: 10px;
+    padding: 8px;
     font-family: sans-serif;
-    font-size: 12px;
+    font-size: 11px;
     color: #000;
-    margin-top: 10px;
-    margin-bottom: 15px;
+    margin-top: 8px;
+    margin-bottom: 10px;
 }
 
 @media print {
     @page { 
         size: A4 landscape; 
-        margin: 10mm; 
+        margin: 8mm; 
     }
     
     header, footer, [data-testid="stToolbar"], [data-testid="stSidebar"], 
@@ -84,39 +84,43 @@ table.excel-table tr:nth-child(even) {
         color: black !important;
         margin: 0 !important;
         padding: 0 !important;
-        height: auto !important;
-        overflow: visible !important;
+        height: 100% !important;
+        overflow: hidden !important;
     }
     
     div[data-testid="stHorizontalBlock"] {
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        gap: 15px !important;
+        align-items: flex-start !important;
+        width: 100% !important;
+    }
+    
+    div[data-testid="column"]:nth-of-type(1) {
+        width: 48% !important;
+        flex: 0 0 48% !important;
         display: block !important;
     }
     
-    div[data-testid="column"] {
-        width: 100% !important;
+    div[data-testid="column"]:nth-of-type(2) {
+        width: 52% !important;
+        flex: 0 0 52% !important;
         display: block !important;
-        page-break-inside: avoid !important;
     }
 
     img {
         width: 100% !important;
-        max-height: 18cm !important;
+        max-height: 16cm !important;
         object-fit: contain !important;
         border: 1px solid #000 !important;
         background-color: white !important;
-        page-break-inside: avoid !important;
     }
 
     table.excel-table {
-        font-size: 9pt !important;
+        font-size: 8pt !important;
         border: 1px solid #000 !important;
-        page-break-inside: auto !important;
     }
-    
-    table.excel-table tr {
-        page-break-inside: avoid !important;
-    }
-
     table.excel-table th, table.excel-table td {
         border: 1px solid #000 !important;
         color: #000 !important;
@@ -125,7 +129,6 @@ table.excel-table tr:nth-child(even) {
     .summary-box {
         border: 1px solid #000 !important;
         background-color: #fff !important;
-        page-break-inside: avoid !important;
     }
 }
 </style>
@@ -260,7 +263,7 @@ if uploaded_file is not None:
                             <b>📊 Gesamtauswertung ({selected_material}):</b><br>
                             • Netto-Gewicht: <b>{round(netto_ges_gew, 2)} kg</b> ({round(netto_ges_preis, 2)} Fr.)<br>
                             • Verschnitt ({int(verschnitt_prozent)}%): <b>{round(verschnitt_ges_gew, 2)} kg</b> ({round(verschnitt_ges_preis, 2)} Fr.)<br>
-                            <hr style="margin: 5px 0; border-top: 1px solid #94a3b8;">
+                            <hr style="margin: 3px 0; border-top: 1px solid #94a3b8;">
                             • <b>TOTAL (Brutto inkl. Verschnitt):</b> <b>{round(brutto_ges_gew, 2)} kg</b> | <b>{round(brutto_ges_preis, 2)} Fr.</b>
                         </div>
                         '''
@@ -290,7 +293,7 @@ if uploaded_file is not None:
                             svg_data = f.read()
                             
                         b64 = base64.b64encode(svg_data.encode("utf-8") if isinstance(svg_data, str) else svg_data).decode("utf-8")
-                        html_img = f'<img src="data:image/svg+xml;base64,{b64}" style="width: 100%; max-height: 750px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; background-color: white;" />'
+                        html_img = f'<img src="data:image/svg+xml;base64,{b64}" style="width: 100%; max-height: 720px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; background-color: white;" />'
                         st.markdown(html_img, unsafe_allow_html=True)
                         
                         st.write("---")
