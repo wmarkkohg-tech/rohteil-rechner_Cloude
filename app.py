@@ -73,7 +73,6 @@ table.excel-table tr:nth-child(even) {
         margin: 8mm; 
     }
     
-    /* Blendet Eingabefelder, Upload, interaktive Tabellen und Buttons beim Drucken aus */
     header, footer, [data-testid="stToolbar"], [data-testid="stSidebar"], 
     [data-testid="stFileUploader"], button, .stCheckbox, iframe,
     h1, div[data-testid="stAlert"], [data-testid="stDataFrame"], 
@@ -140,7 +139,7 @@ table.excel-table tr:nth-child(even) {
 st.title("📦 Rohteil- & Stücklisten-Rechner")
 
 # --- EINSTELLUNGEN OBEN ---
-col_m1, col_m2, col_m3, col_m4 = st.columns([2, 1, 1, 1])
+col_m1, col_m2, col_m3 = st.columns([2, 1, 1])
 with col_m1:
     selected_material = st.selectbox("🪨 Material auswählen:", list(MATERIALIEN.keys()))
 with col_m2:
@@ -148,8 +147,6 @@ with col_m2:
     preis_pro_kg = st.number_input("💰 Preis/kg (CHF)", min_value=0.0, value=markt_preis, step=0.10, format="%.2f")
 with col_m3:
     verschnitt_prozent = st.number_input("✂️ Verschnitt (%)", min_value=0.0, max_value=100.0, value=10.0, step=1.0, format="%.1f")
-with col_m4:
-    baugruppen_faktor = st.number_input("🔢 Baugruppen-Faktor (x)", min_value=1, value=1, step=1, help="Multipliziert alle Stückzahlen automatisch (z. B. wenn du die ganze Baugruppe 5x brauchst)")
 
 dichte = MATERIALIEN[selected_material]["dichte"]
 faktor_verschnitt = verschnitt_prozent / 100.0
@@ -158,9 +155,9 @@ faktor_verschnitt = verschnitt_prozent / 100.0
 uploaded_files = st.file_uploader("STEP-Datei(en) auswählen oder hier ablegen (Mehrfachauswahl möglich)", type=["step", "stp"], accept_multiple_files=True)
 
 if uploaded_files:
-    # Prüfen, ob sich die hochgeladenen Dateien geändert haben (damit 3D-Daten bei Mengenänderung nicht neu laden müssen!)
     current_file_sig = [(f.name, f.size) for f in uploaded_files]
     
+    # Einlesen nur bei neuen Dateien (schont die Leistung und behält manuelle Mengen bei)
     if st.session_state.get("file_sig") != current_file_sig:
         with tempfile.TemporaryDirectory() as tmpdir:
             svg_name = os.path.join(tmpdir, "temp_vorschau.svg")
@@ -263,7 +260,6 @@ if uploaded_files:
                             svg_data = f.read()
                         b64_svg = base64.b64encode(svg_data.encode("utf-8") if isinstance(svg_data, str) else svg_data).decode("utf-8")
                         
-                        # STL für 3D-Ansicht vorbereiten
                         bbox = gesamt_compound.BoundingBox()
                         dx = -(bbox.xmin + bbox.xmax) / 2
                         dy = -(bbox.ymin + bbox.ymax) / 2
@@ -279,7 +275,6 @@ if uploaded_files:
                         with open(stl_name, "rb") as f_stl:
                             stl_bytes = f_stl.read()
                             
-                        # Im Session-State speichern
                         st.session_state["file_sig"] = current_file_sig
                         st.session_state["basis_daten"] = alle_positionen
                         st.session_state["b64_svg"] = b64_svg
@@ -290,7 +285,7 @@ if uploaded_files:
                 st.error(f"Es gab ein technisches Problem beim Lesen der Dateien. Fehler: {e}")
                 st.session_state["basis_daten"] = []
 
-    # --- AUSWERTUNG & INTERAKTIVE MENGENANPASSUNG ---
+    # --- AUSWERTUNG & INDIVIDUELLE MENGENANPASSUNG ---
     basis_daten = st.session_state.get("basis_daten", [])
     if len(basis_daten) == 0:
         st.warning("⚠️ Die hochgeladenen Dateien enthielten keine gültigen 3D-Volumenkörper.")
@@ -306,40 +301,39 @@ if uploaded_files:
                 titel_text = f"📋 Gesamt-Stückliste ({len(uploaded_files)} Dateien)"
             st.markdown(f"### {titel_text}")
             
-            # --- INTERAKTIVE MENGEN-EINGABE (NUR AM BILDSCHIRM SICHTBAR) ---
-            with st.expander("✏️ Stückzahlen von Hand anpassen (hier klicken)", expanded=True):
-                st.caption("Doppelklicke in die Spalte **'Menge (Stk.)'**, tippe eine neue Zahl ein und drücke Enter. Unten und im Druck wird sofort alles live umgerechnet!")
-                
-                edit_input_df = pd.DataFrame({
-                    "Pos.": df_base["Pos"],
-                    "Bauteil / Benennung": df_base["BauteilName"],
-                    "Menge (Stk.)": df_base["BasisAnzahl"] * baugruppen_faktor,
-                    "Maße (mm)": df_base.apply(lambda r: f"{r['Laenge']}x{r['Breite']}x{r['Dicke']}", axis=1),
-                    "DIN (mm)": df_base["NormStaerke"]
-                })
-                
-                edited_df = st.data_editor(
-                    edit_input_df,
-                    disabled=["Pos.", "Bauteil / Benennung", "Maße (mm)", "DIN (mm)"],
-                    hide_index=True,
-                    use_container_width=True,
-                    column_config={
-                        "Menge (Stk.)": st.column_config.NumberColumn(
-                            "Menge (Stk.) ✏️",
-                            min_value=0,
-                            max_value=100000,
-                            step=1,
-                            format="%d"
-                        )
-                    },
-                    key=f"editor_{current_file_sig}_{baugruppen_faktor}"
-                )
+            st.caption("💡 **Tipp:** Passe die Stückzahlen für jede Position unten in der Tabelle direkt an. Die Mengen, Gewichte und Preise aktualisieren sich sofort live!")
             
-            # Aktuelle Mengen aus dem Editor übernehmen
+            # Tabelle für den interaktiven Editor vorbereiten
+            edit_input_df = pd.DataFrame({
+                "Pos.": df_base["Pos"],
+                "Bauteil / Benennung": df_base["BauteilName"],
+                "Menge (Stk.)": df_base["BasisAnzahl"],
+                "Maße (mm)": df_base.apply(lambda r: f"{r['Laenge']}x{r['Breite']}x{r['Dicke']}", axis=1),
+                "DIN (mm)": df_base["NormStaerke"]
+            })
+            
+            # Wenn der Benutzer die Stückzahlen manuell ändert, wird das hier abgefangen
+            edited_df = st.data_editor(
+                edit_input_df,
+                disabled=["Pos.", "Bauteil / Benennung", "Maße (mm)", "DIN (mm)"],
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Menge (Stk.)": st.column_config.NumberColumn(
+                        "Menge (Stk.) ✏️",
+                        min_value=0,
+                        max_value=100000,
+                        step=1,
+                        format="%d"
+                    )
+                },
+                key="main_qty_editor"
+            )
+            
+            # Daten aus dem Editor übernehmen und Berechnungen durchführen
             df_calc = df_base.copy()
             df_calc["Anzahl"] = edited_df["Menge (Stk.)"].astype(int)
             
-            # Live-Berechnungen mit aktueller Dichte, Preis, Verschnitt und neuer Menge
             df_calc["EinzelGewicht"] = df_calc["Volumen_dm3"] * dichte
             df_calc["GesamtGewichtNetto"] = df_calc["EinzelGewicht"] * df_calc["Anzahl"]
             df_calc["VerschnittGewicht"] = df_calc["GesamtGewichtNetto"] * faktor_verschnitt
@@ -348,7 +342,7 @@ if uploaded_files:
             df_calc["EinzelPreis"] = df_calc["EinzelGewicht"] * preis_pro_kg
             df_calc["GesamtPreisBrutto"] = df_calc["GesamtGewichtBrutto"] * preis_pro_kg
             
-            # Gesamtsummen
+            # Gesamtsummen berechnen
             gesamt_bauteile_anzahl = int(df_calc["Anzahl"].sum())
             netto_ges_gew = df_calc["GesamtGewichtNetto"].sum()
             verschnitt_ges_gew = df_calc["VerschnittGewicht"].sum()
