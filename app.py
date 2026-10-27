@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import cadquery as cq
 import os
 import base64
@@ -146,9 +146,9 @@ if uploaded_file is not None:
                             html_masse = f"""
                             <div class="mass-box" style="background-color: #eff6ff; border-left: 5px solid #3b82f6; border-radius: 5px; font-family: sans-serif; color: #000;">
                                 <h4 style="margin-top:0; margin-bottom:5px; color: #1e3a8a; word-wrap: break-word;">{teil_name}</h4>
-                                <strong>Außenmaß:</strong> {L} x {B} x {D} mm<br><br>
-                                <strong>Materialstärke (DIN):</strong> {norm_staerke} mm<br>
-                                <span style="font-size: 0.9em; color: #555;"><em>(Rechnerisch: {round(roh_staerke, 2)} mm)</em></span>
+                                <p style="margin: 2px 0;"><strong>Außenmaß:</strong> {L} x {B} x {D} mm</p>
+                                <p style="margin: 2px 0;"><strong>Materialstärke (DIN):</strong> {norm_staerke} mm</p>
+                                <p style="font-size: 0.9em; color: #555; margin: 2px 0;"><em>(Rechnerisch: {round(roh_staerke, 2)} mm)</em></p>
                             </div>
                             """
                             st.markdown(html_masse, unsafe_allow_html=True)
@@ -204,3 +204,16 @@ if uploaded_file is not None:
                     
         except Exception as e:
             st.error(f"Es gab ein technisches Problem beim Lesen der Datei. Fehler: {e}")
+
+# --- SCHÖNER TEAM-TEILEN-BUTTON UNTEN IN DER APP ---
+st.markdown("---")
+col_b1, col_b2, col_b3 = st.columns([1, 2, 1])
+with col_b2:
+    st.markdown(
+        '<div style="text-align: center;">'
+        '<a href="" target="_self" style="text-decoration: none;">'
+        '<button style="padding: 12px 24px; font-size: 16px; font-weight: bold; cursor: pointer; background-color: #3b82f6; color: white; border: none; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%;">🌐 Diesen App-Link für das Team kopieren</button>'
+        '</a>'
+        '</div>',
+        unsafe_allow_html=True
+    )
