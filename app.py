@@ -35,7 +35,7 @@ table.excel-table {
     width: 100%;
     border-collapse: collapse;
     font-family: sans-serif;
-    margin-top: 10px;
+    margin-top: 8px;
     margin-bottom: 10px;
     color: #000000;
 }
@@ -73,9 +73,12 @@ table.excel-table tr:nth-child(even) {
         margin: 8mm; 
     }
     
+    /* Blendet Eingabefelder, Upload, interaktive Tabellen und Buttons beim Drucken aus */
     header, footer, [data-testid="stToolbar"], [data-testid="stSidebar"], 
     [data-testid="stFileUploader"], button, .stCheckbox, iframe,
-    h1, div[data-testid="stAlert"] { 
+    h1, div[data-testid="stAlert"], [data-testid="stDataFrame"], 
+    div[data-testid="stNumberInput"], div[data-testid="stSelectbox"],
+    div[data-testid="stExpander"] { 
         display: none !important; 
     }
 
@@ -134,11 +137,10 @@ table.excel-table tr:nth-child(even) {
 </style>
 ''', unsafe_allow_html=True)
 
-st.title("📦 Rohteil- & Stücklisten-Rechner (Multi-Datei)")
-st.write("Wähle Material, definiere den Verschnitt in % und ziehe **eine oder mehrere STEP-Dateien gleichzeitig** hinein.")
+st.title("📦 Rohteil- & Stücklisten-Rechner")
 
-# --- EINSTELLUNGEN ---
-col_m1, col_m2, col_m3 = st.columns([2, 1, 1])
+# --- EINSTELLUNGEN OBEN ---
+col_m1, col_m2, col_m3, col_m4 = st.columns([2, 1, 1, 1])
 with col_m1:
     selected_material = st.selectbox("🪨 Material auswählen:", list(MATERIALIEN.keys()))
 with col_m2:
@@ -146,195 +148,112 @@ with col_m2:
     preis_pro_kg = st.number_input("💰 Preis/kg (CHF)", min_value=0.0, value=markt_preis, step=0.10, format="%.2f")
 with col_m3:
     verschnitt_prozent = st.number_input("✂️ Verschnitt (%)", min_value=0.0, max_value=100.0, value=10.0, step=1.0, format="%.1f")
+with col_m4:
+    baugruppen_faktor = st.number_input("🔢 Baugruppen-Faktor (x)", min_value=1, value=1, step=1, help="Multipliziert alle Stückzahlen automatisch (z. B. wenn du die ganze Baugruppe 5x brauchst)")
 
 dichte = MATERIALIEN[selected_material]["dichte"]
 faktor_verschnitt = verschnitt_prozent / 100.0
 
-# --- MULTI-UPLOAD AKTIVIERT ---
+# --- MULTI-UPLOAD ---
 uploaded_files = st.file_uploader("STEP-Datei(en) auswählen oder hier ablegen (Mehrfachauswahl möglich)", type=["step", "stp"], accept_multiple_files=True)
 
 if uploaded_files:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        svg_name = os.path.join(tmpdir, "temp_vorschau.svg")
-        stl_name = os.path.join(tmpdir, "temp_3d.stl")
-        
-        alle_positionen = []
-        alle_teile_verschoben = []
-        aktueller_x_offset = 0.0
-        
-        try:
-            with st.spinner(f"Analysiere {len(uploaded_files)} STEP-Datei(en), benenne Bauteile und berechne Preise..."):
-                for i, uploaded_file in enumerate(uploaded_files):
-                    file_basename = os.path.splitext(uploaded_file.name)[0]
-                    dateiname = os.path.join(tmpdir, f"temp_bauteil_{i}.step")
-                    
-                    with open(dateiname, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    
-                    baugruppe = cq.importers.importStep(dateiname)
-                    teile = baugruppe.solids().vals()
-                    
-                    if len(teile) > 0:
-                        # Für die Gesamtzeichnung: Dateien nebeneinander anordnen
-                        file_compound = cq.Compound.makeCompound(teile)
-                        bbox_file = file_compound.BoundingBox()
+    # Prüfen, ob sich die hochgeladenen Dateien geändert haben (damit 3D-Daten bei Mengenänderung nicht neu laden müssen!)
+    current_file_sig = [(f.name, f.size) for f in uploaded_files]
+    
+    if st.session_state.get("file_sig") != current_file_sig:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            svg_name = os.path.join(tmpdir, "temp_vorschau.svg")
+            stl_name = os.path.join(tmpdir, "temp_3d.stl")
+            
+            alle_positionen = []
+            alle_teile_verschoben = []
+            aktueller_x_offset = 0.0
+            
+            try:
+                with st.spinner(f"Lese {len(uploaded_files)} STEP-Datei(en) ein und erstelle 3D-Geometrie..."):
+                    for i, uploaded_file in enumerate(uploaded_files):
+                        file_basename = os.path.splitext(uploaded_file.name)[0]
+                        dateiname = os.path.join(tmpdir, f"temp_bauteil_{i}.step")
                         
-                        dx = -bbox_file.xmin + aktueller_x_offset
-                        dy = -bbox_file.ymin
-                        dz = -bbox_file.zmin
+                        with open(dateiname, "wb") as f:
+                            f.write(uploaded_file.getbuffer())
                         
-                        verschobenes_compound = file_compound.translate((dx, dy, dz))
-                        alle_teile_verschoben.append(verschobenes_compound)
+                        baugruppe = cq.importers.importStep(dateiname)
+                        teile = baugruppe.solids().vals()
                         
-                        abstand = max(bbox_file.xlen * 0.2, 50.0)
-                        aktueller_x_offset += bbox_file.xlen + abstand
-                        
-                        # Teile innerhalb dieser STEP-Datei analysieren
-                        datei_rohteile = []
-                        for teil in teile:
-                            box = teil.BoundingBox()
-                            abmessungen = sorted([round(box.xlen, 2), round(box.ylen, 2), round(box.zlen, 2)], reverse=True)
-                            L, B, D = abmessungen[0], abmessungen[1], abmessungen[2]
+                        if len(teile) > 0:
+                            file_compound = cq.Compound.makeCompound(teile)
+                            bbox_file = file_compound.BoundingBox()
                             
-                            volumen_mm3 = teil.Volume()
-                            volumen_dm3 = volumen_mm3 / 1_000_000.0
-                            einzel_gewicht = volumen_dm3 * dichte
+                            dx = -bbox_file.xmin + aktueller_x_offset
+                            dy = -bbox_file.ymin
+                            dz = -bbox_file.zmin
                             
-                            oberflaeche = teil.Area()
-                            if oberflaeche > 0:
-                                roh_staerke = (volumen_mm3 / oberflaeche) * 2
-                                norm_staerke = finde_norm_dicke(roh_staerke)
-                            else:
-                                roh_staerke = 0.0
-                                norm_staerke = 0.0
+                            verschobenes_compound = file_compound.translate((dx, dy, dz))
+                            alle_teile_verschoben.append(verschobenes_compound)
+                            
+                            abstand = max(bbox_file.xlen * 0.2, 50.0)
+                            aktueller_x_offset += bbox_file.xlen + abstand
+                            
+                            datei_rohteile = []
+                            for teil in teile:
+                                box = teil.BoundingBox()
+                                abmessungen = sorted([round(box.xlen, 2), round(box.ylen, 2), round(box.zlen, 2)], reverse=True)
+                                L, B, D = abmessungen[0], abmessungen[1], abmessungen[2]
                                 
-                            datei_rohteile.append({
-                                "Laenge": L,
-                                "Breite": B,
-                                "Dicke": D,
-                                "NormStaerke": norm_staerke,
-                                "EinzelGewicht": einzel_gewicht
-                            })
-                        
-                        # Gleiche Teile innerhalb derselben STEP-Datei gruppieren
-                        df_file = pd.DataFrame(datei_rohteile)
-                        df_file_grouped = df_file.groupby(["Laenge", "Breite", "Dicke", "NormStaerke"]).agg(
-                            Anzahl=("Laenge", "count"),
-                            EinzelGewicht=("EinzelGewicht", "first")
-                        ).reset_index()
-                        
-                        # Sortieren nach Häufigkeit/Größe für logische Nummerierung
-                        df_file_grouped = df_file_grouped.sort_values(by=["Anzahl", "Laenge"], ascending=[False, False]).reset_index(drop=True)
-                        
-                        # NAMENSVERGABE:
-                        # 1 Bauteil-Typ in der STEP -> heißt genau wie die STEP-Datei
-                        # Mehrere verschiedene Bauteile in der STEP -> Dateiname_1, Dateiname_2, ...
-                        anzahl_unterschiedliche_teile = len(df_file_grouped)
-                        for idx_f, row_f in df_file_grouped.iterrows():
-                            if anzahl_unterschiedliche_teile == 1:
-                                bauteil_name = file_basename
-                            else:
-                                bauteil_name = f"{file_basename}_{idx_f + 1}"
+                                volumen_mm3 = teil.Volume()
+                                volumen_dm3 = volumen_mm3 / 1_000_000.0
                                 
-                            alle_positionen.append({
-                                "BauteilName": bauteil_name,
-                                "Anzahl": row_f["Anzahl"],
-                                "Laenge": row_f["Laenge"],
-                                "Breite": row_f["Breite"],
-                                "Dicke": row_f["Dicke"],
-                                "NormStaerke": row_f["NormStaerke"],
-                                "EinzelGewicht": row_f["EinzelGewicht"]
-                            })
-                
-                if len(alle_positionen) == 0:
-                    st.warning("⚠️ Die hochgeladenen Dateien enthielten keine gültigen 3D-Volumenkörper.")
-                else:
-                    df_grouped = pd.DataFrame(alle_positionen)
-                    gesamt_bauteile_anzahl = int(df_grouped["Anzahl"].sum())
-                    st.success(f"Erfolgreich! Aus {len(uploaded_files)} Datei(en) wurden insgesamt {gesamt_bauteile_anzahl} Bauteile ({len(df_grouped)} Positionen) analysiert.")
-                    
-                    # Berechnungen pro Position
-                    df_grouped["GesamtGewichtNetto"] = df_grouped["EinzelGewicht"] * df_grouped["Anzahl"]
-                    df_grouped["VerschnittGewicht"] = df_grouped["GesamtGewichtNetto"] * faktor_verschnitt
-                    df_grouped["GesamtGewichtBrutto"] = df_grouped["GesamtGewichtNetto"] + df_grouped["VerschnittGewicht"]
-                    
-                    df_grouped["EinzelPreis"] = df_grouped["EinzelGewicht"] * preis_pro_kg
-                    df_grouped["GesamtPreisBrutto"] = df_grouped["GesamtGewichtBrutto"] * preis_pro_kg
-                    
-                    # Gesamtsummen für die Box unten
-                    netto_ges_gew = df_grouped["GesamtGewichtNetto"].sum()
-                    verschnitt_ges_gew = df_grouped["VerschnittGewicht"].sum()
-                    brutto_ges_gew = df_grouped["GesamtGewichtBrutto"].sum()
-                    netto_ges_preis = netto_ges_gew * preis_pro_kg
-                    verschnitt_ges_preis = verschnitt_ges_gew * preis_pro_kg
-                    brutto_ges_preis = df_grouped["GesamtPreisBrutto"].sum()
-                    
-                    col1, col2 = st.columns([1.15, 0.85])
-                    
-                    with col1:
-                        if len(uploaded_files) == 1:
-                            titel_text = f"📋 Stückliste: {os.path.splitext(uploaded_files[0].name)[0]}"
-                        else:
-                            titel_text = f"📋 Gesamt-Stückliste ({len(uploaded_files)} Dateien)"
-                        st.markdown(f"### {titel_text}")
-                        
-                        html_table = '<table class="excel-table">'
-                        html_table += '<thead><tr><th>Pos.</th><th>Bauteil / Benennung</th><th>Menge</th><th>Maße (L x B x D)</th><th>DIN-Stärke</th><th>Einz.-Gew.</th><th>Ges.-Gew.</th><th>Einz.-Preis</th><th>Ges.-Preis</th></tr></thead>'
-                        html_table += '<tbody>'
-                        
-                        for idx, row in df_grouped.iterrows():
-                            pos = idx + 1
-                            bauteil_str = row["BauteilName"]
-                            anzahl = int(row["Anzahl"])
-                            mass_str = f"{row['Laenge']}x{row['Breite']}x{row['Dicke']}mm"
-                            norm_str = f"{row['NormStaerke']} mm"
-                            einzel_gew_str = f"{round(row['EinzelGewicht'], 2)} kg"
-                            gesamt_gew_str = f"{round(row['GesamtGewichtBrutto'], 2)} kg"
-                            einzel_preis_str = f"{round(row['EinzelPreis'], 2)} Fr."
-                            preis_brutto_str = f"{round(row['GesamtPreisBrutto'], 2)} Fr."
+                                oberflaeche = teil.Area()
+                                if oberflaeche > 0:
+                                    roh_staerke = (volumen_mm3 / oberflaeche) * 2
+                                    norm_staerke = finde_norm_dicke(roh_staerke)
+                                else:
+                                    norm_staerke = 0.0
+                                    
+                                datei_rohteile.append({
+                                    "Laenge": L,
+                                    "Breite": B,
+                                    "Dicke": D,
+                                    "NormStaerke": norm_staerke,
+                                    "Volumen_dm3": volumen_dm3
+                                })
                             
-                            html_table += '<tr>'
-                            html_table += f'<td><b>{pos}</b></td>'
-                            html_table += f'<td><b>{bauteil_str}</b></td>'
-                            html_table += f'<td><b>{anzahl}x</b></td>'
-                            html_table += f'<td>{mass_str}</td>'
-                            html_table += f'<td><b>{norm_str}</b></td>'
-                            html_table += f'<td>{einzel_gew_str}</td>'
-                            html_table += f'<td><b>{gesamt_gew_str}</b></td>'
-                            html_table += f'<td>{einzel_preis_str}</td>'
-                            html_table += f'<td><b>{preis_brutto_str}</b></td>'
-                            html_table += '</tr>'
+                            df_file = pd.DataFrame(datei_rohteile)
+                            df_file_grouped = df_file.groupby(["Laenge", "Breite", "Dicke", "NormStaerke"]).agg(
+                                BasisAnzahl=("Laenge", "count"),
+                                Volumen_dm3=("Volumen_dm3", "first")
+                            ).reset_index()
                             
-                        html_table += '</tbody></table>'
-                        st.markdown(html_table, unsafe_allow_html=True)
-                        
-                        # --- SEPARATE ZUSAMMENFASSUNG UNTEN ---
-                        summary_html = f'''
-                        <div class="summary-box">
-                            <b>📊 Gesamtauswertung ({selected_material} | Total {gesamt_bauteile_anzahl} Teile):</b><br>
-                            • Netto-Gewicht: <b>{round(netto_ges_gew, 2)} kg</b> ({round(netto_ges_preis, 2)} Fr.)<br>
-                            • Verschnitt ({int(verschnitt_prozent)}%): <b>{round(verschnitt_ges_gew, 2)} kg</b> ({round(verschnitt_ges_preis, 2)} Fr.)<br>
-                            <hr style="margin: 3px 0; border-top: 1px solid #94a3b8;">
-                            • <b>TOTAL (Brutto inkl. Verschnitt):</b> <b>{round(brutto_ges_gew, 2)} kg</b> | <b>{round(brutto_ges_preis, 2)} Fr.</b>
-                        </div>
-                        '''
-                        st.markdown(summary_html, unsafe_allow_html=True)
-                        
-                        st.write("") 
-                        st.components.v1.html('<button onclick="window.parent.print()" style="padding:10px 20px; font-size:15px; font-weight:bold; cursor:pointer; background-color:#2563eb; color:white; border:none; border-radius:6px; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">🖨️ Stückliste & Zeichnung drucken</button>', height=55)
-                        
-                    with col2:
-                        st.markdown("### 🖍️ Technische Gesamt-Zeichnung")
-                        
+                            df_file_grouped = df_file_grouped.sort_values(by=["BasisAnzahl", "Laenge"], ascending=[False, False]).reset_index(drop=True)
+                            
+                            anzahl_unterschiedliche_teile = len(df_file_grouped)
+                            for idx_f, row_f in df_file_grouped.iterrows():
+                                if anzahl_unterschiedliche_teile == 1:
+                                    bauteil_name = file_basename
+                                else:
+                                    bauteil_name = f"{file_basename}_{idx_f + 1}"
+                                    
+                                alle_positionen.append({
+                                    "Pos": len(alle_positionen) + 1,
+                                    "BauteilName": bauteil_name,
+                                    "BasisAnzahl": int(row_f["BasisAnzahl"]),
+                                    "Laenge": row_f["Laenge"],
+                                    "Breite": row_f["Breite"],
+                                    "Dicke": row_f["Dicke"],
+                                    "NormStaerke": row_f["NormStaerke"],
+                                    "Volumen_dm3": row_f["Volumen_dm3"]
+                                })
+                    
+                    if len(alle_positionen) > 0:
                         gesamt_compound = cq.Compound.makeCompound(alle_teile_verschoben)
-                        
                         opt = {
                             "width": 1200,
                             "height": 1000,
                             "showAxes": False,
                             "projectionDir": (1.2, -1.0, 1.0)
                         }
-                        
                         try:
                             cq.exporters.export(gesamt_compound, svg_name, opt=opt)
                         except:
@@ -342,45 +261,163 @@ if uploaded_files:
                             
                         with open(svg_name, "r", encoding="utf-8") as f:
                             svg_data = f.read()
-                            
-                        b64 = base64.b64encode(svg_data.encode("utf-8") if isinstance(svg_data, str) else svg_data).decode("utf-8")
-                        html_img = f'<img src="data:image/svg+xml;base64,{b64}" style="width: 100%; max-height: 720px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; background-color: white;" />'
-                        st.markdown(html_img, unsafe_allow_html=True)
+                        b64_svg = base64.b64encode(svg_data.encode("utf-8") if isinstance(svg_data, str) else svg_data).decode("utf-8")
                         
-                        st.write("---")
-                        
-                        if st.checkbox("🔄 Interaktive 3D-Ansicht anzeigen (Drehen & Zoomen)"):
-                            st.info("💡 Tipp: Mit gedrückter linker Maustaste drehen, mit dem Mausrad zoomen.")
+                        # STL für 3D-Ansicht vorbereiten
+                        bbox = gesamt_compound.BoundingBox()
+                        dx = -(bbox.xmin + bbox.xmax) / 2
+                        dy = -(bbox.ymin + bbox.ymax) / 2
+                        dz = -(bbox.zmin + bbox.zmax) / 2
+                        c_centered = gesamt_compound.translate((dx, dy, dz))
+                        cfg_max_dim = max(bbox.xlen, bbox.ylen, bbox.zlen)
+                        if cfg_max_dim > 150:
+                            scale_factor = 100.0 / cfg_max_dim
+                            c_export = c_centered.scale(scale_factor)
+                        else:
+                            c_export = c_centered
+                        cq.exporters.export(c_export, stl_name, tolerance=0.5, angularTolerance=0.5)
+                        with open(stl_name, "rb") as f_stl:
+                            stl_bytes = f_stl.read()
                             
-                            bbox = gesamt_compound.BoundingBox()
-                            dx = -(bbox.xmin + bbox.xmax) / 2
-                            dy = -(bbox.ymin + bbox.ymax) / 2
-                            dz = -(bbox.zmin + bbox.zmax) / 2
-                            
-                            c_centered = gesamt_compound.translate((dx, dy, dz))
-                            cfg_max_dim = max(bbox.xlen, bbox.ylen, bbox.zlen)
-                            if cfg_max_dim > 150:
-                                scale_factor = 100.0 / cfg_max_dim
-                                c_export = c_centered.scale(scale_factor)
-                            else:
-                                c_export = c_centered
-                                
-                            cq.exporters.export(c_export, stl_name, tolerance=0.5, angularTolerance=0.5)
-                            stl_from_file(file_path=stl_name, color="#ff8c00", height=600)
-                
-        except Exception as e:
-            st.error(f"Es gab ein technisches Problem beim Lesen der Dateien. Fehler: {e}")
+                        # Im Session-State speichern
+                        st.session_state["file_sig"] = current_file_sig
+                        st.session_state["basis_daten"] = alle_positionen
+                        st.session_state["b64_svg"] = b64_svg
+                        st.session_state["stl_bytes"] = stl_bytes
+                    else:
+                        st.session_state["basis_daten"] = []
+            except Exception as e:
+                st.error(f"Es gab ein technisches Problem beim Lesen der Dateien. Fehler: {e}")
+                st.session_state["basis_daten"] = []
 
-st.markdown("---")
-st.markdown(
-    """
-    <div style="text-align: center; margin-top: 20px; margin-bottom: 20px;">
-        <a href="javascript:window.location.reload(true);" target="_blank" style="text-decoration: none;">
-            <button style="padding: 12px 28px; font-size: 16px; font-weight: bold; cursor: pointer; background: linear-gradient(135deg, #10b981, #059669); color: white; border: none; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.15); transition: 0.3s;">
-                🌐 App im Browser öffnen / Link kopieren
-            </button>
-        </a>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+    # --- AUSWERTUNG & INTERAKTIVE MENGENANPASSUNG ---
+    basis_daten = st.session_state.get("basis_daten", [])
+    if len(basis_daten) == 0:
+        st.warning("⚠️ Die hochgeladenen Dateien enthielten keine gültigen 3D-Volumenkörper.")
+    else:
+        df_base = pd.DataFrame(basis_daten)
+        
+        col1, col2 = st.columns([1.15, 0.85])
+        
+        with col1:
+            if len(uploaded_files) == 1:
+                titel_text = f"📋 Stückliste: {os.path.splitext(uploaded_files[0].name)[0]}"
+            else:
+                titel_text = f"📋 Gesamt-Stückliste ({len(uploaded_files)} Dateien)"
+            st.markdown(f"### {titel_text}")
+            
+            # --- INTERAKTIVE MENGEN-EINGABE (NUR AM BILDSCHIRM SICHTBAR) ---
+            with st.expander("✏️ Stückzahlen von Hand anpassen (hier klicken)", expanded=True):
+                st.caption("Doppelklicke in die Spalte **'Menge (Stk.)'**, tippe eine neue Zahl ein und drücke Enter. Unten und im Druck wird sofort alles live umgerechnet!")
+                
+                edit_input_df = pd.DataFrame({
+                    "Pos.": df_base["Pos"],
+                    "Bauteil / Benennung": df_base["BauteilName"],
+                    "Menge (Stk.)": df_base["BasisAnzahl"] * baugruppen_faktor,
+                    "Maße (mm)": df_base.apply(lambda r: f"{r['Laenge']}x{r['Breite']}x{r['Dicke']}", axis=1),
+                    "DIN (mm)": df_base["NormStaerke"]
+                })
+                
+                edited_df = st.data_editor(
+                    edit_input_df,
+                    disabled=["Pos.", "Bauteil / Benennung", "Maße (mm)", "DIN (mm)"],
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "Menge (Stk.)": st.column_config.NumberColumn(
+                            "Menge (Stk.) ✏️",
+                            min_value=0,
+                            max_value=100000,
+                            step=1,
+                            format="%d"
+                        )
+                    },
+                    key=f"editor_{current_file_sig}_{baugruppen_faktor}"
+                )
+            
+            # Aktuelle Mengen aus dem Editor übernehmen
+            df_calc = df_base.copy()
+            df_calc["Anzahl"] = edited_df["Menge (Stk.)"].astype(int)
+            
+            # Live-Berechnungen mit aktueller Dichte, Preis, Verschnitt und neuer Menge
+            df_calc["EinzelGewicht"] = df_calc["Volumen_dm3"] * dichte
+            df_calc["GesamtGewichtNetto"] = df_calc["EinzelGewicht"] * df_calc["Anzahl"]
+            df_calc["VerschnittGewicht"] = df_calc["GesamtGewichtNetto"] * faktor_verschnitt
+            df_calc["GesamtGewichtBrutto"] = df_calc["GesamtGewichtNetto"] + df_calc["VerschnittGewicht"]
+            
+            df_calc["EinzelPreis"] = df_calc["EinzelGewicht"] * preis_pro_kg
+            df_calc["GesamtPreisBrutto"] = df_calc["GesamtGewichtBrutto"] * preis_pro_kg
+            
+            # Gesamtsummen
+            gesamt_bauteile_anzahl = int(df_calc["Anzahl"].sum())
+            netto_ges_gew = df_calc["GesamtGewichtNetto"].sum()
+            verschnitt_ges_gew = df_calc["VerschnittGewicht"].sum()
+            brutto_ges_gew = df_calc["GesamtGewichtBrutto"].sum()
+            netto_ges_preis = netto_ges_gew * preis_pro_kg
+            verschnitt_ges_preis = verschnitt_ges_gew * preis_pro_kg
+            brutto_ges_preis = df_calc["GesamtPreisBrutto"].sum()
+            
+            # --- DRUCKFÄHIGE HAUPTTABELLE ---
+            html_table = '<table class="excel-table">'
+            html_table += '<thead><tr><th>Pos.</th><th>Bauteil / Benennung</th><th>Menge</th><th>Maße (L x B x D)</th><th>DIN-Stärke</th><th>Einz.-Gew.</th><th>Ges.-Gew.</th><th>Einz.-Preis</th><th>Ges.-Preis</th></tr></thead>'
+            html_table += '<tbody>'
+            
+            for idx, row in df_calc.iterrows():
+                pos = int(row["Pos"])
+                bauteil_str = row["BauteilName"]
+                anzahl = int(row["Anzahl"])
+                mass_str = f"{row['Laenge']}x{row['Breite']}x{row['Dicke']}mm"
+                norm_str = f"{row['NormStaerke']} mm"
+                einzel_gew_str = f"{round(row['EinzelGewicht'], 2)} kg"
+                gesamt_gew_str = f"{round(row['GesamtGewichtBrutto'], 2)} kg"
+                einzel_preis_str = f"{round(row['EinzelPreis'], 2)} Fr."
+                preis_brutto_str = f"{round(row['GesamtPreisBrutto'], 2)} Fr."
+                
+                html_table += '<tr>'
+                html_table += f'<td><b>{pos}</b></td>'
+                html_table += f'<td><b>{bauteil_str}</b></td>'
+                html_table += f'<td><b>{anzahl}x</b></td>'
+                html_table += f'<td>{mass_str}</td>'
+                html_table += f'<td><b>{norm_str}</b></td>'
+                html_table += f'<td>{einzel_gew_str}</td>'
+                html_table += f'<td><b>{gesamt_gew_str}</b></td>'
+                html_table += f'<td>{einzel_preis_str}</td>'
+                html_table += f'<td><b>{preis_brutto_str}</b></td>'
+                html_table += '</tr>'
+                
+            html_table += '</tbody></table>'
+            st.markdown(html_table, unsafe_allow_html=True)
+            
+            # --- SEPARATE ZUSAMMENFASSUNG UNTEN ---
+            summary_html = f'''
+            <div class="summary-box">
+                <b>📊 Gesamtauswertung ({selected_material} | Total Menge: {gesamt_bauteile_anzahl} Stk.):</b><br>
+                • Netto-Gewicht: <b>{round(netto_ges_gew, 2)} kg</b> ({round(netto_ges_preis, 2)} Fr.)<br>
+                • Verschnitt ({int(verschnitt_prozent)}%): <b>{round(verschnitt_ges_gew, 2)} kg</b> ({round(verschnitt_ges_preis, 2)} Fr.)<br>
+                <hr style="margin: 3px 0; border-top: 1px solid #94a3b8;">
+                • <b>TOTAL (Brutto inkl. Verschnitt):</b> <b>{gesamt_bauteile_anzahl} Stk.</b> | <b>{round(brutto_ges_gew, 2)} kg</b> | <b>{round(brutto_ges_preis, 2)} Fr.</b>
+            </div>
+            '''
+            st.markdown(summary_html, unsafe_allow_html=True)
+            
+            st.write("") 
+            st.components.v1.html('<button onclick="window.parent.print()" style="padding:10px 20px; font-size:15px; font-weight:bold; cursor:pointer; background-color:#2563eb; color:white; border:none; border-radius:6px; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">🖨️ Stückliste & Zeichnung drucken</button>', height=55)
+            
+        with col2:
+            st.markdown("### 🖍️ Technische Gesamt-Zeichnung")
+            
+            b64_svg = st.session_state.get("b64_svg", "")
+            if b64_svg:
+                html_img = f'<img src="data:image/svg+xml;base64,{b64_svg}" style="width: 100%; max-height: 720px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; background-color: white;" />'
+                st.markdown(html_img, unsafe_allow_html=True)
+            
+            st.write("---")
+            
+            if st.checkbox("🔄 Interaktive 3D-Ansicht anzeigen (Drehen & Zoomen)"):
+                st.info("💡 Tipp: Mit gedrückter linker Maustaste drehen, mit dem Mausrad zoomen.")
+                stl_bytes = st.session_state.get("stl_bytes", None)
+                if stl_bytes:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_stl:
+                        tmp_stl.write(stl_bytes)
+                        tmp_stl_path = tmp_stl.name
+                    stl_from_file(file_path=tmp_stl_path, color="#ff8c00", height=600)
