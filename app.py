@@ -41,9 +41,9 @@ table.excel-table {
 }
 table.excel-table th, table.excel-table td {
     border: 1px solid #94a3b8;
-    padding: 5px 7px;
+    padding: 5px 6px;
     text-align: left;
-    font-size: 11px;
+    font-size: 10px;
     color: #000000;
 }
 table.excel-table th {
@@ -114,7 +114,7 @@ table.excel-table tr:nth-child(even) {
     }
 
     table.excel-table {
-        font-size: 9pt !important;
+        font-size: 8.5pt !important;
         border: 1px solid #000 !important;
     }
     table.excel-table th, table.excel-table td {
@@ -131,7 +131,7 @@ table.excel-table tr:nth-child(even) {
 ''', unsafe_allow_html=True)
 
 st.title("📦 Rohteil- & Stücklisten-Rechner")
-st.write("Wähle Material, definiere den Verschnitt in % und erhalte die komplette Aufschlüsselung inklusive Einzelpreisen und Gesamtsummen.")
+st.write("Wähle Material, definiere den Verschnitt in % und erhalte die komplette Aufschlüsselung inklusive aller Gewichte und Preise.")
 
 # --- EINSTELLUNGEN ---
 col_m1, col_m2, col_m3 = st.columns([2, 1, 1])
@@ -210,7 +210,6 @@ if uploaded_file is not None:
                     df_grouped["GesamtGewichtBrutto"] = df_grouped["GesamtGewichtNetto"] + df_grouped["VerschnittGewicht"]
                     
                     df_grouped["EinzelPreis"] = df_grouped["EinzelGewicht"] * preis_pro_kg
-                    df_grouped["VerschnittPreis"] = df_grouped["VerschnittGewicht"] * preis_pro_kg
                     df_grouped["GesamtPreisBrutto"] = df_grouped["GesamtGewichtBrutto"] * preis_pro_kg
                     
                     df_grouped = df_grouped.sort_values(by="Anzahl", ascending=False).reset_index(drop=True)
@@ -229,7 +228,7 @@ if uploaded_file is not None:
                         st.markdown(f"### 📋 Stückliste: {file_basename}")
                         
                         html_table = '<table class="excel-table">'
-                        html_table += '<thead><tr><th>Pos.</th><th>Menge</th><th>Maße (L x B x D)</th><th>Einz.-Gew.</th><th>Einz.-Preis</th><th>Ges.-Preis (Brutto)</th></tr></thead>'
+                        html_table += '<thead><tr><th>Pos.</th><th>Menge</th><th>Maße (L x B x D)</th><th>Einz.-Gew.</th><th>Ges.-Gew.</th><th>Einz.-Preis</th><th>Ges.-Preis</th></tr></thead>'
                         html_table += '<tbody>'
                         
                         for idx, row in df_grouped.iterrows():
@@ -237,6 +236,7 @@ if uploaded_file is not None:
                             anzahl = int(row["Anzahl"])
                             mass_str = f"{row['Laenge']}x{row['Breite']}x{row['Dicke']}mm"
                             einzel_gew_str = f"{round(row['EinzelGewicht'], 2)} kg"
+                            gesamt_gew_str = f"{round(row['GesamtGewichtBrutto'], 2)} kg"
                             einzel_preis_str = f"{round(row['EinzelPreis'], 2)} Fr."
                             preis_brutto_str = f"{round(row['GesamtPreisBrutto'], 2)} Fr."
                             
@@ -245,6 +245,7 @@ if uploaded_file is not None:
                             html_table += f'<td><b>{anzahl}x</b></td>'
                             html_table += f'<td>{mass_str}</td>'
                             html_table += f'<td>{einzel_gew_str}</td>'
+                            html_table += f'<td><b>{gesamt_gew_str}</b></td>'
                             html_table += f'<td>{einzel_preis_str}</td>'
                             html_table += f'<td><b>{preis_brutto_str}</b></td>'
                             html_table += f'</tr>'
@@ -299,30 +300,3 @@ if uploaded_file is not None:
                             bbox = compound.BoundingBox()
                             dx = -(bbox.xmin + bbox.xmax) / 2
                             dy = -(bbox.ymin + bbox.ymax) / 2
-                            dz = -(bbox.zmin + bbox.zmax) / 2
-                            
-                            c_centered = compound.translate((dx, dy, dz))
-                            cfg_max_dim = max(bbox.xlen, bbox.ylen, bbox.zlen)
-                            if cfg_max_dim > 150:
-                                scale_factor = 100.0 / cfg_max_dim
-                                c_export = c_centered.scale(scale_factor)
-                            else:
-                                c_export = c_centered
-                                
-                            cq.exporters.export(c_export, stl_name, tolerance=0.5, angularTolerance=0.5)
-                            stl_from_file(file_path=stl_name, color="#ff8c00", height=600)
-                
-        except Exception as e:
-            st.error(f"Es gab ein technisches Problem beim Lesen der Datei. Fehler: {e}")
-
-st.markdown("---")
-col_b1, col_b2, col_b3 = st.columns([1, 2, 1])
-with col_b2:
-    st.markdown(
-        '<div style="text-align: center;">'
-        '<a href="" target="_self" style="text-decoration: none;">'
-        '<button style="padding: 10px 20px; font-size: 15px; font-weight: bold; cursor: pointer; background-color: #10b981; color: white; border: none; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%;">🌐 App-Link für das Team teilen</button>'
-        '</a>'
-        '</div>',
-        unsafe_allow_html=True
-    )
