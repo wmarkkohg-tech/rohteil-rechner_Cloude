@@ -6,11 +6,11 @@ import tempfile
 import pandas as pd
 from streamlit_stl import stl_from_file
 
-# --- Dichten in g/cm³ (kg/dm³) und empfohlene Richtpreise (€/kg) ---
+# --- Dichten in g/cm³ und Richtpreise (CHF/kg) ---
 MATERIALIEN = {
-    "Stahl (1.0037 / S235)": {"dichte": 7.85, "preis": 2.50},
-    "Aluminium (AlMg3 / AlCuMg)": {"dichte": 2.70, "preis": 4.80},
-    "CNS / Edelstahl (1.4301)": {"dichte": 7.90, "preis": 8.50}
+    "Stahl (1.0037 / S235)": {"dichte": 7.85, "preis_markt": 2.40},
+    "Aluminium (AlMg3 / AlCuMg)": {"dichte": 2.70, "preis_markt": 4.50},
+    "CNS / Edelstahl (1.4301)": {"dichte": 7.90, "preis_markt": 7.80}
 }
 
 DIN_STAERKEN = [0.5, 0.7, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0]
@@ -22,7 +22,7 @@ def finde_norm_dicke(berechnet):
 
 st.set_page_config(page_title="Rohteil- & Stücklisten-Rechner", layout="wide")
 
-# --- DRUCK-CSS: QUERFORMAT & MAXIMALE ZEICHNUNGSGRÖSSE ---
+# --- DRUCK-CSS: SAUBERE EINSEITIGE QUERFORMAT-ANSICHT ---
 st.markdown('''
 <style>
 iframe[height="600"] {
@@ -41,9 +41,9 @@ table.excel-table {
 }
 table.excel-table th, table.excel-table td {
     border: 1px solid #94a3b8;
-    padding: 8px 10px;
+    padding: 6px 8px;
     text-align: left;
-    font-size: 13px;
+    font-size: 12px;
     color: #000000;
 }
 table.excel-table th {
@@ -58,7 +58,7 @@ table.excel-table tr:nth-child(even) {
 @media print {
     @page { 
         size: A4 landscape; 
-        margin: 10mm; 
+        margin: 8mm; 
     }
     
     header, footer, [data-testid="stToolbar"], [data-testid="stSidebar"], 
@@ -72,13 +72,15 @@ table.excel-table tr:nth-child(even) {
         color: black !important;
         margin: 0 !important;
         padding: 0 !important;
-        overflow: visible !important;
+        height: 100% !important;
+        overflow: hidden !important;
     }
     
     div[data-testid="stHorizontalBlock"] {
         display: flex !important;
         flex-direction: row !important;
         gap: 15px !important;
+        align-items: flex-start !important;
     }
     
     div[data-testid="column"]:nth-of-type(1) {
@@ -93,14 +95,14 @@ table.excel-table tr:nth-child(even) {
 
     img {
         width: 100% !important;
-        max-height: 18cm !important;
+        max-height: 17cm !important;
         object-fit: contain !important;
         border: 1px solid #000 !important;
         background-color: white !important;
     }
 
     table.excel-table {
-        font-size: 10pt !important;
+        font-size: 9pt !important;
         border: 1px solid #000 !important;
     }
     table.excel-table th, table.excel-table td {
@@ -112,17 +114,20 @@ table.excel-table tr:nth-child(even) {
 ''', unsafe_allow_html=True)
 
 st.title("📦 Rohteil- & Stücklisten-Rechner")
-st.write("Wähle das Material, passe den Kilopreis live an und ziehe die STEP-Datei hinein.")
+st.write("Wähle Material, definiere den individuellen Verschnitt in % und ziehe die STEP-Datei hinein.")
 
-# --- LIVE BERECHNUNG: MATERIAL & PREIS ---
-col_m1, col_m2 = st.columns([2, 1])
+# --- EINSTELLUNGEN: MATERIAL, PREIS & VERSCHNITT ---
+col_m1, col_m2, col_m3 = st.columns([2, 1, 1])
 with col_m1:
     selected_material = st.selectbox("🪨 Material auswählen:", list(MATERIALIEN.keys()))
 with col_m2:
-    standard_preis = MATERIALIEN[selected_material]["preis"]
-    preis_pro_kg = st.number_input("💰 Preis pro kg (€)", min_value=0.0, value=standard_preis, step=0.10, format="%.2f")
+    markt_preis = MATERIALIEN[selected_material]["preis_markt"]
+    preis_pro_kg = st.number_input("💰 Preis/kg (CHF)", min_value=0.0, value=markt_preis, step=0.10, format="%.2f")
+with col_m3:
+    verschnitt_prozent = st.number_input("✂️ Verschnitt (%)", min_value=0.0, max_value=100.0, value=10.0, step=1.0, format="%.1f")
 
 dichte = MATERIALIEN[selected_material]["dichte"]
+faktor_verschnitt = 1.0 + (verschnitt_prozent / 100.0)
 
 uploaded_file = st.file_uploader("STEP-Datei auswählen oder hier ablegen", type=["step", "stp"])
 
@@ -138,7 +143,7 @@ if uploaded_file is not None:
             f.write(uploaded_file.getbuffer())
         
         try:
-            with st.spinner("Analysiere 3D-Daten, berechne Gewichte und Preise live..."):
+            with st.spinner("Analysiere 3D-Daten, berechne Gewichte, Verschnitt und Preise..."):
                 baugruppe = cq.importers.importStep(dateiname)
                 teile = baugruppe.solids().vals()
                 
@@ -182,35 +187,40 @@ if uploaded_file is not None:
                         EinzelGewicht=("EinzelGewicht", "first")
                     ).reset_index()
                     
-                    df_grouped["GesamtGewicht"] = df_grouped["EinzelGewicht"] * df_grouped["Anzahl"]
-                    df_grouped["GesamtPreis"] = df_grouped["GesamtGewicht"] * preis_pro_kg
+                    # Netto & Brutto (inkl. Verschnitt) berechnen
+                    df_grouped["GesamtGewichtNetto"] = df_grouped["EinzelGewicht"] * df_grouped["Anzahl"]
+                    df_grouped["GesamtGewichtBrutto"] = df_grouped["GesamtGewichtNetto"] * faktor_verschnitt
+                    df_grouped["GesamtPreisBrutto"] = df_grouped["GesamtGewichtBrutto"] * preis_pro_kg
                     df_grouped = df_grouped.sort_values(by="Anzahl", ascending=False).reset_index(drop=True)
                     
-                    gesamt_gewicht_baugruppe = df_grouped["GesamtGewicht"].sum()
-                    gesamt_preis_baugruppe = df_grouped["GesamtPreis"].sum()
+                    gesamt_gewicht_netto = df_grouped["GesamtGewichtNetto"].sum()
+                    gesamt_gewicht_brutto = df_grouped["GesamtGewichtBrutto"].sum()
+                    gesamt_preis_brutto = df_grouped["GesamtPreisBrutto"].sum()
                     
                     col1, col2 = st.columns([1, 1])
                     
                     with col1:
                         st.markdown(f"### 📋 Stückliste: {file_basename}")
-                        st.markdown(f"**Gesamtgewicht:** <b>{round(gesamt_gewicht_baugruppe, 2)} kg</b> | **Gesamtpreis:** <b>{round(gesamt_preis_baugruppe, 2)} €</b>", unsafe_allow_html=True)
+                        st.markdown(f"**Netto-Gewicht:** {round(gesamt_gewicht_netto, 2)} kg | **Inkl. {int(verschnitt_prozent)}% Verschnitt:** <b>{round(gesamt_gewicht_brutto, 2)} kg</b><br>**Gesamtpreis:** <b>{round(gesamt_preis_brutto, 2)} Fr.</b>", unsafe_allow_html=True)
                         
                         html_table = '<table class="excel-table">'
-                        html_table += '<thead><tr><th>Pos.</th><th>Menge</th><th>Maße (L x B x D)</th><th>Ges.-Gew.</th><th>Ges.-Preis</th></tr></thead>'
+                        html_table += '<thead><tr><th>Pos.</th><th>Menge</th><th>Maße (L x B x D)</th><th>Einz.-Gew.</th><th>Ges.-Gew. (Brutto)</th><th>Ges.-Preis</th></tr></thead>'
                         html_table += '<tbody>'
                         
                         for idx, row in df_grouped.iterrows():
                             pos = idx + 1
                             anzahl = int(row["Anzahl"])
                             mass_str = f"{row['Laenge']}x{row['Breite']}x{row['Dicke']}mm"
-                            gew_str = f"{round(row['GesamtGewicht'], 2)} kg"
-                            preis_str = f"{round(row['GesamtPreis'], 2)} €"
+                            einzel_gew_str = f"{round(row['EinzelGewicht'], 2)} kg"
+                            gew_brutto_str = f"{round(row['GesamtGewichtBrutto'], 2)} kg"
+                            preis_str = f"{round(row['GesamtGewichtBrutto'] * preis_pro_kg, 2)} Fr."
                             
                             html_table += f'<tr>'
                             html_table += f'<td><b>{pos}</b></td>'
                             html_table += f'<td><b>{anzahl}x</b></td>'
                             html_table += f'<td>{mass_str}</td>'
-                            html_table += f'<td>{gew_str}</td>'
+                            html_table += f'<td>{einzel_gew_str}</td>'
+                            html_table += f'<td>{gew_brutto_str}</td>'
                             html_table += f'<td><b>{preis_str}</b></td>'
                             html_table += f'</tr>'
                             
@@ -218,10 +228,10 @@ if uploaded_file is not None:
                         
                         st.markdown(html_table, unsafe_allow_html=True)
                         st.write("") 
-                        st.components.v1.html('<button onclick="window.parent.print()" style="padding:12px 20px; font-size:16px; font-weight:bold; cursor:pointer; background-color:#2563eb; color:white; border:none; border-radius:6px; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">🖨️ Stückliste & Zeichnung drucken (Querformat)</button>', height=60)
+                        st.components.v1.html('<button onclick="window.parent.print()" style="padding:12px 20px; font-size:16px; font-weight:bold; cursor:pointer; background-color:#2563eb; color:white; border:none; border-radius:6px; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">🖨️ Stückliste & Zeichnung drucken (1 Seite)</button>', height=60)
                         
                     with col2:
-                        st.markdown("### 🖍️ Technische Zeichnung (Maximal groß)")
+                        st.markdown("### 🖍️ Technische Zeichnung")
                         
                         compound = cq.Compound.makeCompound(teile)
                         
@@ -241,7 +251,7 @@ if uploaded_file is not None:
                             svg_data = f.read()
                             
                         b64 = base64.b64encode(svg_data.encode("utf-8") if isinstance(svg_data, str) else svg_data).decode("utf-8")
-                        html_img = f'<img src="data:image/svg+xml;base64,{b64}" style="width: 100%; max-height: 850px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; background-color: white;" />'
+                        html_img = f'<img src="data:image/svg+xml;base64,{b64}" style="width: 100%; max-height: 800px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; background-color: white;" />'
                         st.markdown(html_img, unsafe_allow_html=True)
                         
                         st.write("---")
