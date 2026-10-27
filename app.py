@@ -6,11 +6,11 @@ import tempfile
 import pandas as pd
 from streamlit_stl import stl_from_file
 
-# --- Dichten in g/cm³ (kg/dm³) ---
-DICHTEN = {
-    "Stahl (1.0037 / S235)": 7.85,
-    "Aluminium (AlMg3 / AlCuMg)": 2.70,
-    "CNS / Edelstahl (1.4301)": 7.90
+# --- Dichten in g/cm³ (kg/dm³) und empfohlene Richtpreise (€/kg) ---
+MATERIALIEN = {
+    "Stahl (1.0037 / S235)": {"dichte": 7.85, "preis": 2.50},
+    "Aluminium (AlMg3 / AlCuMg)": {"dichte": 2.70, "preis": 4.80},
+    "CNS / Edelstahl (1.4301)": {"dichte": 7.90, "preis": 8.50}
 }
 
 DIN_STAERKEN = [0.5, 0.7, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0]
@@ -22,7 +22,7 @@ def finde_norm_dicke(berechnet):
 
 st.set_page_config(page_title="Rohteil- & Stücklisten-Rechner", layout="wide")
 
-# --- DRUCK-CSS: SEITE 1 STÜCKLISTE, SEITE 2 TECHNISCHE ZEICHNUNG ---
+# --- DRUCK-CSS: QUERFORMAT & MAXIMALE ZEICHNUNGSGRÖSSE ---
 st.markdown('''
 <style>
 iframe[height="600"] {
@@ -57,8 +57,8 @@ table.excel-table tr:nth-child(even) {
 
 @media print {
     @page { 
-        size: A4 portrait; 
-        margin: 15mm; 
+        size: A4 landscape; 
+        margin: 10mm; 
     }
     
     header, footer, [data-testid="stToolbar"], [data-testid="stSidebar"], 
@@ -76,35 +76,31 @@ table.excel-table tr:nth-child(even) {
     }
     
     div[data-testid="stHorizontalBlock"] {
-        display: block !important;
+        display: flex !important;
+        flex-direction: row !important;
+        gap: 15px !important;
     }
     
-    /* Stückliste auf Seite 1 */
     div[data-testid="column"]:nth-of-type(1) {
-        width: 100% !important;
-        display: block !important;
-        page-break-after: always !important;
-        break-after: page !important;
+        width: 45% !important;
+        flex: 0 0 45% !important;
     }
     
-    /* Technische Zeichnung zwingend auf ein neues, volles Blatt (Seite 2) */
     div[data-testid="column"]:nth-of-type(2) {
-        width: 100% !important;
-        display: block !important;
-        page-break-before: always !important;
-        break-before: page !important;
+        width: 55% !important;
+        flex: 0 0 55% !important;
     }
 
     img {
         width: 100% !important;
-        max-height: 24cm !important;
+        max-height: 18cm !important;
         object-fit: contain !important;
         border: 1px solid #000 !important;
         background-color: white !important;
     }
 
     table.excel-table {
-        font-size: 11pt !important;
+        font-size: 10pt !important;
         border: 1px solid #000 !important;
     }
     table.excel-table th, table.excel-table td {
@@ -116,10 +112,17 @@ table.excel-table tr:nth-child(even) {
 ''', unsafe_allow_html=True)
 
 st.title("📦 Rohteil- & Stücklisten-Rechner")
-st.write("Wähle das Material aus, ziehe die STEP-Datei hinein und erhalte getrennte Gewichte sowie saubere A4-Druckseiten.")
+st.write("Wähle das Material, passe den Kilopreis live an und ziehe die STEP-Datei hinein.")
 
-selected_material = st.selectbox("🪨 Material für Gewichtsberechnung auswählen:", list(DICHTEN.keys()))
-dichte = DICHTEN[selected_material]
+# --- LIVE BERECHNUNG: MATERIAL & PREIS ---
+col_m1, col_m2 = st.columns([2, 1])
+with col_m1:
+    selected_material = st.selectbox("🪨 Material auswählen:", list(MATERIALIEN.keys()))
+with col_m2:
+    standard_preis = MATERIALIEN[selected_material]["preis"]
+    preis_pro_kg = st.number_input("💰 Preis pro kg (€)", min_value=0.0, value=standard_preis, step=0.10, format="%.2f")
+
+dichte = MATERIALIEN[selected_material]["dichte"]
 
 uploaded_file = st.file_uploader("STEP-Datei auswählen oder hier ablegen", type=["step", "stp"])
 
@@ -135,7 +138,7 @@ if uploaded_file is not None:
             f.write(uploaded_file.getbuffer())
         
         try:
-            with st.spinner("Analysiere 3D-Daten, berechne Gewichte und Stückliste..."):
+            with st.spinner("Analysiere 3D-Daten, berechne Gewichte und Preise live..."):
                 baugruppe = cq.importers.importStep(dateiname)
                 teile = baugruppe.solids().vals()
                 
@@ -180,51 +183,51 @@ if uploaded_file is not None:
                     ).reset_index()
                     
                     df_grouped["GesamtGewicht"] = df_grouped["EinzelGewicht"] * df_grouped["Anzahl"]
+                    df_grouped["GesamtPreis"] = df_grouped["GesamtGewicht"] * preis_pro_kg
                     df_grouped = df_grouped.sort_values(by="Anzahl", ascending=False).reset_index(drop=True)
                     
                     gesamt_gewicht_baugruppe = df_grouped["GesamtGewicht"].sum()
+                    gesamt_preis_baugruppe = df_grouped["GesamtPreis"].sum()
                     
                     col1, col2 = st.columns([1, 1])
                     
                     with col1:
                         st.markdown(f"### 📋 Stückliste: {file_basename}")
-                        st.markdown(f"**Material:** {selected_material} | **Gesamtgewicht Baugruppe:** <b>{round(gesamt_gewicht_baugruppe, 2)} kg</b>", unsafe_allow_html=True)
+                        st.markdown(f"**Gesamtgewicht:** <b>{round(gesamt_gewicht_baugruppe, 2)} kg</b> | **Gesamtpreis:** <b>{round(gesamt_preis_baugruppe, 2)} €</b>", unsafe_allow_html=True)
                         
                         html_table = '<table class="excel-table">'
-                        html_table += '<thead><tr><th>Pos.</th><th>Menge</th><th>Außenmaß (L x B x D)</th><th>DIN</th><th>Einzel-Gew.</th><th>Gesamt-Gew.</th></tr></thead>'
+                        html_table += '<thead><tr><th>Pos.</th><th>Menge</th><th>Maße (L x B x D)</th><th>Ges.-Gew.</th><th>Ges.-Preis</th></tr></thead>'
                         html_table += '<tbody>'
                         
                         for idx, row in df_grouped.iterrows():
                             pos = idx + 1
                             anzahl = int(row["Anzahl"])
-                            mass_str = f"{row['Laenge']} x {row['Breite']} x {row['Dicke']} mm"
-                            norm_str = f"{row['NormStaerke']} mm"
-                            einzel_str = f"{round(row['EinzelGewicht'], 2)} kg"
-                            gesamt_str = f"{round(row['GesamtGewicht'], 2)} kg"
+                            mass_str = f"{row['Laenge']}x{row['Breite']}x{row['Dicke']}mm"
+                            gew_str = f"{round(row['GesamtGewicht'], 2)} kg"
+                            preis_str = f"{round(row['GesamtPreis'], 2)} €"
                             
                             html_table += f'<tr>'
                             html_table += f'<td><b>{pos}</b></td>'
-                            html_table += f'<td><b>{anzahl} Stk.</b></td>'
+                            html_table += f'<td><b>{anzahl}x</b></td>'
                             html_table += f'<td>{mass_str}</td>'
-                            html_table += f'<td>{norm_str}</td>'
-                            html_table += f'<td>{einzel_str}</td>'
-                            html_table += f'<td><b>{gesamt_str}</b></td>'
+                            html_table += f'<td>{gew_str}</td>'
+                            html_table += f'<td><b>{preis_str}</b></td>'
                             html_table += f'</tr>'
                             
                         html_table += '</tbody></table>'
                         
                         st.markdown(html_table, unsafe_allow_html=True)
                         st.write("") 
-                        st.components.v1.html('<button onclick="window.parent.print()" style="padding:12px 20px; font-size:16px; font-weight:bold; cursor:pointer; background-color:#2563eb; color:white; border:none; border-radius:6px; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">🖨️ Stückliste & Zeichnung drucken</button>', height=60)
+                        st.components.v1.html('<button onclick="window.parent.print()" style="padding:12px 20px; font-size:16px; font-weight:bold; cursor:pointer; background-color:#2563eb; color:white; border:none; border-radius:6px; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">🖨️ Stückliste & Zeichnung drucken (Querformat)</button>', height=60)
                         
                     with col2:
-                        st.markdown("### 🖍️ Technische Zeichnung (Vollbild A4)")
+                        st.markdown("### 🖍️ Technische Zeichnung (Maximal groß)")
                         
                         compound = cq.Compound.makeCompound(teile)
                         
                         opt = {
-                            "width": 1000,
-                            "height": 900,
+                            "width": 1200,
+                            "height": 1000,
                             "showAxes": False,
                             "projectionDir": (1.2, -1.0, 1.0)
                         }
