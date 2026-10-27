@@ -22,7 +22,7 @@ def finde_norm_dicke(berechnet):
 
 st.set_page_config(page_title="Rohteil- & Stücklisten-Rechner", layout="wide")
 
-# --- DRUCK-CSS: SAUBERE EINSEITIGE QUERFORMAT-ANSICHT ---
+# --- DRUCK-CSS: FLEXIBEL (NUTZT SO VIELE SEITEN WIE NÖTIG, KEINE LEERSEITEN) ---
 st.markdown('''
 <style>
 iframe[height="600"] {
@@ -70,7 +70,7 @@ table.excel-table tr:nth-child(even) {
 @media print {
     @page { 
         size: A4 landscape; 
-        margin: 8mm; 
+        margin: 10mm; 
     }
     
     header, footer, [data-testid="stToolbar"], [data-testid="stSidebar"], 
@@ -84,39 +84,39 @@ table.excel-table tr:nth-child(even) {
         color: black !important;
         margin: 0 !important;
         padding: 0 !important;
-        height: 100% !important;
-        overflow: hidden !important;
+        height: auto !important;
+        overflow: visible !important;
     }
     
     div[data-testid="stHorizontalBlock"] {
-        display: flex !important;
-        flex-direction: row !important;
-        gap: 15px !important;
-        align-items: flex-start !important;
+        display: block !important;
     }
     
-    div[data-testid="column"]:nth-of-type(1) {
-        width: 48% !important;
-        flex: 0 0 48% !important;
-    }
-    
-    div[data-testid="column"]:nth-of-type(2) {
-        width: 52% !important;
-        flex: 0 0 52% !important;
+    div[data-testid="column"] {
+        width: 100% !important;
+        display: block !important;
+        page-break-inside: avoid !important;
     }
 
     img {
         width: 100% !important;
-        max-height: 17cm !important;
+        max-height: 18cm !important;
         object-fit: contain !important;
         border: 1px solid #000 !important;
         background-color: white !important;
+        page-break-inside: avoid !important;
     }
 
     table.excel-table {
-        font-size: 8.5pt !important;
+        font-size: 9pt !important;
         border: 1px solid #000 !important;
+        page-break-inside: auto !important;
     }
+    
+    table.excel-table tr {
+        page-break-inside: avoid !important;
+    }
+
     table.excel-table th, table.excel-table td {
         border: 1px solid #000 !important;
         color: #000 !important;
@@ -125,6 +125,7 @@ table.excel-table tr:nth-child(even) {
     .summary-box {
         border: 1px solid #000 !important;
         background-color: #fff !important;
+        page-break-inside: avoid !important;
     }
 }
 </style>
@@ -240,90 +241,4 @@ if uploaded_file is not None:
                             einzel_preis_str = f"{round(row['EinzelPreis'], 2)} Fr."
                             preis_brutto_str = f"{round(row['GesamtPreisBrutto'], 2)} Fr."
                             
-                            html_table += f'<tr>'
-                            html_table += f'<td><b>{pos}</b></td>'
-                            html_table += f'<td><b>{anzahl}x</b></td>'
-                            html_table += f'<td>{mass_str}</td>'
-                            html_table += f'<td>{einzel_gew_str}</td>'
-                            html_table += f'<td><b>{gesamt_gew_str}</b></td>'
-                            html_table += f'<td>{einzel_preis_str}</td>'
-                            html_table += f'<td><b>{preis_brutto_str}</b></td>'
-                            html_table += f'</tr>'
-                            
-                        html_table += '</tbody></table>'
-                        st.markdown(html_table, unsafe_allow_html=True)
-                        
-                        # --- SEPARATE ZUSAMMENFASSUNG UNTEN ---
-                        summary_html = f'''
-                        <div class="summary-box">
-                            <b>📊 Gesamtauswertung ({selected_material}):</b><br>
-                            • Netto-Gewicht: <b>{round(netto_ges_gew, 2)} kg</b> ({round(netto_ges_preis, 2)} Fr.)<br>
-                            • Verschnitt ({int(verschnitt_prozent)}%): <b>{round(verschnitt_ges_gew, 2)} kg</b> ({round(verschnitt_ges_preis, 2)} Fr.)<br>
-                            <hr style="margin: 5px 0; border-top: 1px solid #94a3b8;">
-                            • <b>TOTAL (Brutto inkl. Verschnitt):</b> <b>{round(brutto_ges_gew, 2)} kg</b> | <b>{round(brutto_ges_preis, 2)} Fr.</b>
-                        </div>
-                        '''
-                        st.markdown(summary_html, unsafe_allow_html=True)
-                        
-                        st.write("") 
-                        st.components.v1.html('<button onclick="window.parent.print()" style="padding:10px 20px; font-size:15px; font-weight:bold; cursor:pointer; background-color:#2563eb; color:white; border:none; border-radius:6px; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">🖨️ Stückliste & Zeichnung drucken (1 Seite)</button>', height=55)
-                        
-                    with col2:
-                        st.markdown("### 🖍️ Technische Zeichnung")
-                        
-                        compound = cq.Compound.makeCompound(teile)
-                        
-                        opt = {
-                            "width": 1200,
-                            "height": 1000,
-                            "showAxes": False,
-                            "projectionDir": (1.2, -1.0, 1.0)
-                        }
-                        
-                        try:
-                            cq.exporters.export(compound, svg_name, opt=opt)
-                        except:
-                            cq.exporters.export(compound, svg_name)
-                            
-                        with open(svg_name, "r", encoding="utf-8") as f:
-                            svg_data = f.read()
-                            
-                        b64 = base64.b64encode(svg_data.encode("utf-8") if isinstance(svg_data, str) else svg_data).decode("utf-8")
-                        html_img = f'<img src="data:image/svg+xml;base64,{b64}" style="width: 100%; max-height: 750px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; background-color: white;" />'
-                        st.markdown(html_img, unsafe_allow_html=True)
-                        
-                        st.write("---")
-                        
-                        if st.checkbox("🔄 Interaktive 3D-Ansicht anzeigen (Drehen & Zoomen)"):
-                            st.info("💡 Tipp: Mit gedrückter linker Maustaste drehen, mit dem Mausrad zoomen.")
-                            
-                            bbox = compound.BoundingBox()
-                            dx = -(bbox.xmin + bbox.xmax) / 2
-                            dy = -(bbox.ymin + bbox.ymax) / 2
-                            dz = -(bbox.zmin + bbox.zmax) / 2
-                            
-                            c_centered = compound.translate((dx, dy, dz))
-                            cfg_max_dim = max(bbox.xlen, bbox.ylen, bbox.zlen)
-                            if cfg_max_dim > 150:
-                                scale_factor = 100.0 / cfg_max_dim
-                                c_export = c_centered.scale(scale_factor)
-                            else:
-                                c_export = c_centered
-                                
-                            cq.exporters.export(c_export, stl_name, tolerance=0.5, angularTolerance=0.5)
-                            stl_from_file(file_path=stl_name, color="#ff8c00", height=600)
-                
-        except Exception as e:
-            st.error(f"Es gab ein technisches Problem beim Lesen der Datei. Fehler: {e}")
-
-st.markdown("---")
-col_b1, col_b2, col_b3 = st.columns([1, 2, 1])
-with col_b2:
-    st.markdown(
-        '<div style="text-align: center;">'
-        '<a href="" target="_self" style="text-decoration: none;">'
-        '<button style="padding: 10px 20px; font-size: 15px; font-weight: bold; cursor: pointer; background-color: #10b981; color: white; border: none; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%;">🌐 App-Link für das Team teilen</button>'
-        '</a>'
-        '</div>',
-        unsafe_allow_html=True
-    )
+                            html_table += f
