@@ -22,7 +22,7 @@ def finde_norm_dicke(berechnet):
 
 st.set_page_config(page_title="Rohteil- & Stücklisten-Rechner", layout="wide")
 
-# --- CSS FÜR ANZEIGE UND DRUCK (MEHRSEITIG & SICHTBAR) ---
+# --- DRUCK-CSS: SEITE 1 STÜCKLISTE, SEITE 2 TECHNISCHE ZEICHNUNG ---
 st.markdown('''
 <style>
 iframe[height="600"] {
@@ -78,27 +78,34 @@ table.excel-table tr:nth-child(even) {
     div[data-testid="stHorizontalBlock"] {
         display: block !important;
     }
-    div[data-testid="column"] {
+    
+    /* Stückliste auf Seite 1 */
+    div[data-testid="column"]:nth-of-type(1) {
         width: 100% !important;
         display: block !important;
-        margin-bottom: 20px !important;
+        page-break-after: always !important;
+        break-after: page !important;
+    }
+    
+    /* Technische Zeichnung zwingend auf ein neues, volles Blatt (Seite 2) */
+    div[data-testid="column"]:nth-of-type(2) {
+        width: 100% !important;
+        display: block !important;
+        page-break-before: always !important;
+        break-before: page !important;
     }
 
     img {
-        max-width: 100% !important;
-        height: auto !important;
-        page-break-inside: avoid !important;
+        width: 100% !important;
+        max-height: 24cm !important;
+        object-fit: contain !important;
         border: 1px solid #000 !important;
+        background-color: white !important;
     }
 
     table.excel-table {
         font-size: 11pt !important;
         border: 1px solid #000 !important;
-        page-break-inside: auto !important;
-    }
-    table.excel-table tr {
-        page-break-inside: avoid !important;
-        page-break-after: auto !important;
     }
     table.excel-table th, table.excel-table td {
         border: 1px solid #000 !important;
@@ -109,9 +116,8 @@ table.excel-table tr:nth-child(even) {
 ''', unsafe_allow_html=True)
 
 st.title("📦 Rohteil- & Stücklisten-Rechner")
-st.write("Ziehe eine STEP-Datei hinein. Wähle das Material aus – das Gewicht und die Stückliste werden automatisch berechnet.")
+st.write("Wähle das Material aus, ziehe die STEP-Datei hinein und erhalte getrennte Gewichte sowie saubere A4-Druckseiten.")
 
-# --- MATERIAL-AUSWAHL IN DER SEITENLEISTE ODER OBEN ---
 selected_material = st.selectbox("🪨 Material für Gewichtsberechnung auswählen:", list(DICHTEN.keys()))
 dichte = DICHTEN[selected_material]
 
@@ -146,8 +152,8 @@ if uploaded_file is not None:
                         D = round(box.zlen, 2)
                         
                         volumen_mm3 = teil.Volume()
-                        volumen_dm3 = volumen_mm3 / 1_000_000.0  # mm³ in dm³ (Liter) umrechnen
-                        einzel_gewicht = volumen_dm3 * dichte     # Gewicht in kg
+                        volumen_dm3 = volumen_mm3 / 1_000_000.0  # mm³ in dm³ (Liter)
+                        einzel_gewicht = volumen_dm3 * dichte     # Gewicht in kg pro Stück
                         
                         oberflaeche = teil.Area()
                         if oberflaeche > 0:
@@ -167,7 +173,7 @@ if uploaded_file is not None:
                     
                     df = pd.DataFrame(rohteile_liste)
                     
-                    # Identische Teile gruppieren und Stückzahl + Gesamtgewicht berechnen
+                    # Gruppieren nach gleichen Abmessungen
                     df_grouped = df.groupby(["Laenge", "Breite", "Dicke", "NormStaerke"]).agg(
                         Anzahl=("Laenge", "count"),
                         EinzelGewicht=("EinzelGewicht", "first")
@@ -182,10 +188,10 @@ if uploaded_file is not None:
                     
                     with col1:
                         st.markdown(f"### 📋 Stückliste: {file_basename}")
-                        st.markdown(f"**Material:** {selected_material} | **Gesamtgewicht:** <b>{round(gesamt_gewicht_baugruppe, 2)} kg</b>", unsafe_allow_html=True)
+                        st.markdown(f"**Material:** {selected_material} | **Gesamtgewicht Baugruppe:** <b>{round(gesamt_gewicht_baugruppe, 2)} kg</b>", unsafe_allow_html=True)
                         
                         html_table = '<table class="excel-table">'
-                        html_table += '<thead><tr><th>Pos.</th><th>Menge</th><th>Außenmaß (L x B x D)</th><th>DIN</th><th>Gesamt-Gew.</th></tr></thead>'
+                        html_table += '<thead><tr><th>Pos.</th><th>Menge</th><th>Außenmaß (L x B x D)</th><th>DIN</th><th>Einzel-Gew.</th><th>Gesamt-Gew.</th></tr></thead>'
                         html_table += '<tbody>'
                         
                         for idx, row in df_grouped.iterrows():
@@ -193,14 +199,16 @@ if uploaded_file is not None:
                             anzahl = int(row["Anzahl"])
                             mass_str = f"{row['Laenge']} x {row['Breite']} x {row['Dicke']} mm"
                             norm_str = f"{row['NormStaerke']} mm"
-                            gew_str = f"{round(row['GesamtGewicht'], 2)} kg"
+                            einzel_str = f"{round(row['EinzelGewicht'], 2)} kg"
+                            gesamt_str = f"{round(row['GesamtGewicht'], 2)} kg"
                             
                             html_table += f'<tr>'
                             html_table += f'<td><b>{pos}</b></td>'
                             html_table += f'<td><b>{anzahl} Stk.</b></td>'
                             html_table += f'<td>{mass_str}</td>'
                             html_table += f'<td>{norm_str}</td>'
-                            html_table += f'<td><b>{gew_str}</b></td>'
+                            html_table += f'<td>{einzel_str}</td>'
+                            html_table += f'<td><b>{gesamt_str}</b></td>'
                             html_table += f'</tr>'
                             
                         html_table += '</tbody></table>'
@@ -210,13 +218,13 @@ if uploaded_file is not None:
                         st.components.v1.html('<button onclick="window.parent.print()" style="padding:12px 20px; font-size:16px; font-weight:bold; cursor:pointer; background-color:#2563eb; color:white; border:none; border-radius:6px; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">🖨️ Stückliste & Zeichnung drucken</button>', height=60)
                         
                     with col2:
-                        st.markdown("### 🖍️ Technische Zeichnung")
+                        st.markdown("### 🖍️ Technische Zeichnung (Vollbild A4)")
                         
                         compound = cq.Compound.makeCompound(teile)
                         
                         opt = {
-                            "width": 900,
-                            "height": 750,
+                            "width": 1000,
+                            "height": 900,
                             "showAxes": False,
                             "projectionDir": (1.2, -1.0, 1.0)
                         }
@@ -229,8 +237,8 @@ if uploaded_file is not None:
                         with open(svg_name, "r", encoding="utf-8") as f:
                             svg_data = f.read()
                             
-                        b64 = base64.b64encode(svg_data.encode("str" if "str" in str(type(svg_data)) else "utf-8") if isinstance(svg_data, str) else svg_data).decode("utf-8") if not isinstance(svg_data, str) else base64.b64encode(svg_data.encode("utf-8")).decode("utf-8")
-                        html_img = f'<img src="data:image/svg+xml;base64,{b64}" style="width: 100%; max-height: 750px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; background-color: white;" />'
+                        b64 = base64.b64encode(svg_data.encode("utf-8") if isinstance(svg_data, str) else svg_data).decode("utf-8")
+                        html_img = f'<img src="data:image/svg+xml;base64,{b64}" style="width: 100%; max-height: 850px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; background-color: white;" />'
                         st.markdown(html_img, unsafe_allow_html=True)
                         
                         st.write("---")
