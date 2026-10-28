@@ -18,6 +18,7 @@ DIN_STAERKEN = [0.5, 0.7, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0,
 def finde_norm_dicke(berechnet):
     if berechnet <= 0:
         return 0.0
+    # Findet exakt die nächstgelegene DIN-Blechstärke ohne Verzerrung durch Bohrungen
     return min(DIN_STAERKEN, key=lambda x: abs(x - berechnet))
 
 st.set_page_config(page_title="Rohteil- & Stücklisten-Rechner", layout="wide")
@@ -157,7 +158,6 @@ uploaded_files = st.file_uploader("STEP-Datei(en) auswählen oder hier ablegen (
 if uploaded_files:
     current_file_sig = [(f.name, f.size) for f in uploaded_files]
     
-    # Einlesen nur bei neuen Dateien (schont die Leistung und behält manuelle Mengen bei)
     if st.session_state.get("file_sig") != current_file_sig:
         with tempfile.TemporaryDirectory() as tmpdir:
             svg_name = os.path.join(tmpdir, "temp_vorschau.svg")
@@ -168,7 +168,7 @@ if uploaded_files:
             aktueller_x_offset = 0.0
             
             try:
-                with st.spinner(f"Lese {len(uploaded_files)} STEP-Datei(en) ein und erstelle 3D-Geometrie..."):
+                with st.spinner(f"Lese {len(uploaded_files)} STEP-Datei(en) ein und ermittle exakte Blechstärken..."):
                     for i, uploaded_file in enumerate(uploaded_files):
                         file_basename = os.path.splitext(uploaded_file.name)[0]
                         dateiname = os.path.join(tmpdir, f"temp_bauteil_{i}.step")
@@ -196,18 +196,15 @@ if uploaded_files:
                             datei_rohteile = []
                             for teil in teile:
                                 box = teil.BoundingBox()
-                                abmessungen = sorted([round(box.xlen, 2), round(box.ylen, 2), round(box.zlen, 2)], reverse=True)
-                                L, B, D = abmessungen[0], abmessungen[1], abmessungen[2]
+                                # Alle 3 Dimensionen der BoundingBox ermitteln und sortieren
+                                dim = sorted([round(box.xlen, 2), round(box.ylen, 2), round(box.zlen, 2)], reverse=True)
+                                L, B, D = dim[0], dim[1], dim[2]  # D ist die exakte Blechdicke (kleinste Seite)
                                 
                                 volumen_mm3 = teil.Volume()
                                 volumen_dm3 = volumen_mm3 / 1_000_000.0
                                 
-                                oberflaeche = teil.Area()
-                                if oberflaeche > 0:
-                                    roh_staerke = (volumen_mm3 / oberflaeche) * 2
-                                    norm_staerke = finde_norm_dicke(roh_staerke)
-                                else:
-                                    norm_staerke = 0.0
+                                # Präzise Bestimmung der DIN-Blechstärke über die physische Dicke D
+                                norm_staerke = finde_norm_dicke(D)
                                     
                                 datei_rohteile.append({
                                     "Laenge": L,
@@ -301,38 +298,35 @@ if uploaded_files:
                 titel_text = f"📋 Gesamt-Stückliste ({len(uploaded_files)} Dateien)"
             st.markdown(f"### {titel_text}")
             
-            st.caption("💡 **Tipp:** Passe die Stückzahlen für jede Position unten in der Tabelle direkt an. Die Mengen, Gewichte und Preise aktualisieren sich sofort live!")
+            st.caption("💡 **Tipp:** Die DIN-Stärke wird nun direkt aus der kleinsten Bauteil-Dimension ermittelt. Du kannst sie bei Bedarf unten in der Tabelle trotzdem manuell anpassen.")
             
-            # Tabelle für den interaktiven Editor vorbereiten
             edit_input_df = pd.DataFrame({
                 "Pos.": df_base["Pos"],
                 "Bauteil / Benennung": df_base["BauteilName"],
                 "Menge (Stk.)": df_base["BasisAnzahl"],
                 "Maße (mm)": df_base.apply(lambda r: f"{r['Laenge']}x{r['Breite']}x{r['Dicke']}", axis=1),
-                "DIN (mm)": df_base["NormStaerke"]
+                "DIN-Stärke (mm)": df_base["NormStaerke"]
             })
             
-            # Wenn der Benutzer die Stückzahlen manuell ändert, wird das hier abgefangen
             edited_df = st.data_editor(
                 edit_input_df,
-                disabled=["Pos.", "Bauteil / Benennung", "Maße (mm)", "DIN (mm)"],
+                disabled=["Pos.", "Bauteil / Benennung", "Maße (mm)"],
                 hide_index=True,
                 use_container_width=True,
                 column_config={
                     "Menge (Stk.)": st.column_config.NumberColumn(
-                        "Menge (Stk.) ✏️",
-                        min_value=0,
-                        max_value=100000,
-                        step=1,
-                        format="%d"
+                        "Menge ✏️", min_value=0, max_value=100000, step=1, format="%d"
+                    ),
+                    "DIN-Stärke (mm)": st.column_config.NumberColumn(
+                        "DIN-Stärke ✏️", min_value=0.1, max_value=100.0, step=0.5, format="%.1f mm"
                     )
                 },
                 key="main_qty_editor"
             )
             
-            # Daten aus dem Editor übernehmen und Berechnungen durchführen
             df_calc = df_base.copy()
             df_calc["Anzahl"] = edited_df["Menge (Stk.)"].astype(int)
+            df_calc["NormStaerke"] = edited_df["DIN-Stärke (mm)"].astype(float)
             
             df_calc["EinzelGewicht"] = df_calc["Volumen_dm3"] * dichte
             df_calc["GesamtGewichtNetto"] = df_calc["EinzelGewicht"] * df_calc["Anzahl"]
@@ -342,7 +336,6 @@ if uploaded_files:
             df_calc["EinzelPreis"] = df_calc["EinzelGewicht"] * preis_pro_kg
             df_calc["GesamtPreisBrutto"] = df_calc["GesamtGewichtBrutto"] * preis_pro_kg
             
-            # Gesamtsummen berechnen
             gesamt_bauteile_anzahl = int(df_calc["Anzahl"].sum())
             netto_ges_gew = df_calc["GesamtGewichtNetto"].sum()
             verschnitt_ges_gew = df_calc["VerschnittGewicht"].sum()
@@ -351,7 +344,6 @@ if uploaded_files:
             verschnitt_ges_preis = verschnitt_ges_gew * preis_pro_kg
             brutto_ges_preis = df_calc["GesamtPreisBrutto"].sum()
             
-            # --- DRUCKFÄHIGE HAUPTTABELLE ---
             html_table = '<table class="excel-table">'
             html_table += '<thead><tr><th>Pos.</th><th>Bauteil / Benennung</th><th>Menge</th><th>Maße (L x B x D)</th><th>DIN-Stärke</th><th>Einz.-Gew.</th><th>Ges.-Gew.</th><th>Einz.-Preis</th><th>Ges.-Preis</th></tr></thead>'
             html_table += '<tbody>'
@@ -382,7 +374,6 @@ if uploaded_files:
             html_table += '</tbody></table>'
             st.markdown(html_table, unsafe_allow_html=True)
             
-            # --- SEPARATE ZUSAMMENFASSUNG UNTEN ---
             summary_html = f'''
             <div class="summary-box">
                 <b>📊 Gesamtauswertung ({selected_material} | Total Menge: {gesamt_bauteile_anzahl} Stk.):</b><br>
