@@ -18,12 +18,11 @@ DIN_STAERKEN = [0.5, 0.7, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0,
 def finde_norm_dicke(berechnet):
     if berechnet <= 0:
         return 0.0
-    # Findet exakt die nächstgelegene DIN-Blechstärke ohne Verzerrung durch Bohrungen
     return min(DIN_STAERKEN, key=lambda x: abs(x - berechnet))
 
 st.set_page_config(page_title="Rohteil- & Stücklisten-Rechner", layout="wide")
 
-# --- DRUCK-CSS: LINKS STÜCKLISTE, RECHTS ZEICHNUNG (NEBENEINANDER IM QUERFORMAT) ---
+# --- DRUCK-CSS ---
 st.markdown('''
 <style>
 iframe[height="600"] {
@@ -139,7 +138,6 @@ table.excel-table tr:nth-child(even) {
 
 st.title("📦 Rohteil- & Stücklisten-Rechner")
 
-# --- EINSTELLUNGEN OBEN ---
 col_m1, col_m2, col_m3 = st.columns([2, 1, 1])
 with col_m1:
     selected_material = st.selectbox("🪨 Material auswählen:", list(MATERIALIEN.keys()))
@@ -152,8 +150,7 @@ with col_m3:
 dichte = MATERIALIEN[selected_material]["dichte"]
 faktor_verschnitt = verschnitt_prozent / 100.0
 
-# --- MULTI-UPLOAD ---
-uploaded_files = st.file_uploader("STEP-Datei(en) auswählen oder hier ablegen (Mehrfachauswahl möglich)", type=["step", "stp"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("STEP-Datei(en) auswählen oder hier ablegen", type=["step", "stp"], accept_multiple_files=True)
 
 if uploaded_files:
     current_file_sig = [(f.name, f.size) for f in uploaded_files]
@@ -168,7 +165,7 @@ if uploaded_files:
             aktueller_x_offset = 0.0
             
             try:
-                with st.spinner(f"Lese {len(uploaded_files)} STEP-Datei(en) ein und ermittle exakte Blechstärken..."):
+                with st.spinner("Analysiere STEP-Dateien..."):
                     for i, uploaded_file in enumerate(uploaded_files):
                         file_basename = os.path.splitext(uploaded_file.name)[0]
                         dateiname = os.path.join(tmpdir, f"temp_bauteil_{i}.step")
@@ -196,14 +193,11 @@ if uploaded_files:
                             datei_rohteile = []
                             for teil in teile:
                                 box = teil.BoundingBox()
-                                # Alle 3 Dimensionen der BoundingBox ermitteln und sortieren
                                 dim = sorted([round(box.xlen, 2), round(box.ylen, 2), round(box.zlen, 2)], reverse=True)
-                                L, B, D = dim[0], dim[1], dim[2]  # D ist die exakte Blechdicke (kleinste Seite)
+                                L, B, D = dim[0], dim[1], dim[2]
                                 
                                 volumen_mm3 = teil.Volume()
                                 volumen_dm3 = volumen_mm3 / 1_000_000.0
-                                
-                                # Präzise Bestimmung der DIN-Blechstärke über die physische Dicke D
                                 norm_staerke = finde_norm_dicke(D)
                                     
                                 datei_rohteile.append({
@@ -279,13 +273,12 @@ if uploaded_files:
                     else:
                         st.session_state["basis_daten"] = []
             except Exception as e:
-                st.error(f"Es gab ein technisches Problem beim Lesen der Dateien. Fehler: {e}")
+                st.error(f"Fehler beim Lesen der Dateien: {e}")
                 st.session_state["basis_daten"] = []
 
-    # --- AUSWERTUNG & INDIVIDUELLE MENGENANPASSUNG ---
     basis_daten = st.session_state.get("basis_daten", [])
     if len(basis_daten) == 0:
-        st.warning("⚠️ Die hochgeladenen Dateien enthielten keine gültigen 3D-Volumenkörper.")
+        st.warning("⚠️ Keine gültigen Volumenkörper gefunden.")
     else:
         df_base = pd.DataFrame(basis_daten)
         
@@ -298,8 +291,6 @@ if uploaded_files:
                 titel_text = f"📋 Gesamt-Stückliste ({len(uploaded_files)} Dateien)"
             st.markdown(f"### {titel_text}")
             
-            st.caption("💡 **Tipp:** Die DIN-Stärke wird nun direkt aus der kleinsten Bauteil-Dimension ermittelt. Du kannst sie bei Bedarf unten in der Tabelle trotzdem manuell anpassen.")
-            
             edit_input_df = pd.DataFrame({
                 "Pos.": df_base["Pos"],
                 "Bauteil / Benennung": df_base["BauteilName"],
@@ -308,17 +299,15 @@ if uploaded_files:
                 "DIN-Stärke (mm)": df_base["NormStaerke"]
             })
             
+            # DIN-Stärke und Maße sind hier strikt gesperrt (disabled), nur Menge ist anpassbar
             edited_df = st.data_editor(
                 edit_input_df,
-                disabled=["Pos.", "Bauteil / Benennung", "Maße (mm)"],
+                disabled=["Pos.", "Bauteil / Benennung", "Maße (mm)", "DIN-Stärke (mm)"],
                 hide_index=True,
                 use_container_width=True,
                 column_config={
                     "Menge (Stk.)": st.column_config.NumberColumn(
                         "Menge ✏️", min_value=0, max_value=100000, step=1, format="%d"
-                    ),
-                    "DIN-Stärke (mm)": st.column_config.NumberColumn(
-                        "DIN-Stärke ✏️", min_value=0.1, max_value=100.0, step=0.5, format="%.1f mm"
                     )
                 },
                 key="main_qty_editor"
@@ -326,7 +315,6 @@ if uploaded_files:
             
             df_calc = df_base.copy()
             df_calc["Anzahl"] = edited_df["Menge (Stk.)"].astype(int)
-            df_calc["NormStaerke"] = edited_df["DIN-Stärke (mm)"].astype(float)
             
             df_calc["EinzelGewicht"] = df_calc["Volumen_dm3"] * dichte
             df_calc["GesamtGewichtNetto"] = df_calc["EinzelGewicht"] * df_calc["Anzahl"]
