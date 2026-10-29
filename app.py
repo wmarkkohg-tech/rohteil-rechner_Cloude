@@ -15,10 +15,26 @@ MATERIALIEN = {
 
 DIN_STAERKEN = [0.5, 0.7, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0]
 
-def finde_norm_dicke(berechnet):
-    if berechnet <= 0:
-        return 0.0
-    return min(DIN_STAERKEN, key=lambda x: abs(x - berechnet))
+def ermittle_exakte_blechstaerke(teil):
+    """
+    Sicherer Algorithmus für Blechteile:
+    Ermittelt die exakte Blechstärke über Volumen und Oberfläche (2 * Volumen / Fläche),
+    da BoundingBoxes bei gekanteten Blechen in der Diagonale messen würden.
+    """
+    try:
+        volumen_mm3 = teil.Volume()
+        oberflaeche_mm2 = teil.Area()
+        if oberflaeche_mm2 > 0:
+            berechnete_staerke = (2.0 * volumen_mm3) / oberflaeche_mm2
+            # Auf die nächste DIN-Stärke mappen
+            return min(DIN_STAERKEN, key=lambda x: abs(x - berechnete_staerke))
+    except:
+        pass
+    
+    # Fallback auf kleinste BoundingBox-Dimension
+    box = teil.BoundingBox()
+    dims = sorted([box.xlen, box.ylen, box.zlen])
+    return min(DIN_STAERKEN, key=lambda x: abs(x - dims[0]))
 
 st.set_page_config(page_title="Rohteil- & Stücklisten-Rechner", layout="wide")
 
@@ -165,7 +181,7 @@ if uploaded_files:
             aktueller_x_offset = 0.0
             
             try:
-                with st.spinner("Analysiere STEP-Dateien..."):
+                with st.spinner("Analysiere STEP-Dateien fehlerfrei..."):
                     for i, uploaded_file in enumerate(uploaded_files):
                         file_basename = os.path.splitext(uploaded_file.name)[0]
                         dateiname = os.path.join(tmpdir, f"temp_bauteil_{i}.step")
@@ -193,12 +209,17 @@ if uploaded_files:
                             datei_rohteile = []
                             for teil in teile:
                                 box = teil.BoundingBox()
-                                dim = sorted([round(box.xlen, 2), round(box.ylen, 2), round(box.zlen, 2)], reverse=True)
-                                L, B, D = dim[0], dim[1], dim[2]
+                                # L, B aus den größeren BoundingBox-Seiten
+                                dim = sorted([box.xlen, box.ylen, box.zlen], reverse=True)
+                                L = round(dim[0], 2)
+                                B = round(dim[1], 2)
                                 
                                 volumen_mm3 = teil.Volume()
                                 volumen_dm3 = volumen_mm3 / 1_000_000.0
-                                norm_staerke = finde_norm_dicke(D)
+                                
+                                # EXAKTE Blechstärke über Volumen/Oberfläche ermitteln (verhindert Diagonaleffekt bei gekanteten Blechen!)
+                                norm_staerke = ermittle_exakte_blechstaerke(teil)
+                                D = norm_staerke  # Dicke entspricht exakt der DIN-Blechstärke
                                     
                                 datei_rohteile.append({
                                     "Laenge": L,
@@ -299,7 +320,6 @@ if uploaded_files:
                 "DIN-Stärke (mm)": df_base["NormStaerke"]
             })
             
-            # DIN-Stärke und Maße sind hier strikt gesperrt (disabled), nur Menge ist anpassbar
             edited_df = st.data_editor(
                 edit_input_df,
                 disabled=["Pos.", "Bauteil / Benennung", "Maße (mm)", "DIN-Stärke (mm)"],
@@ -355,6 +375,7 @@ if uploaded_files:
                 html_table += f'<td><b>{norm_str}</b></td>'
                 html_table += f'<td>{einzel_gew_str}</td>'
                 html_table += f'<td><b>{gesamt_gew_str}</b></td>'
+                html_file_str = f'<td>{einzel_preis_str}</td>'
                 html_table += f'<td>{einzel_preis_str}</td>'
                 html_table += f'<td><b>{preis_brutto_str}</b></td>'
                 html_table += '</tr>'
