@@ -1,4 +1,6 @@
 ﻿streamlit
-ezdxf
 cadquery
 streamlit-stl
+pandas
+ezdxf
+shapely
